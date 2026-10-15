@@ -12,6 +12,7 @@ comptime {
 }
 
 var window: wio.Window = undefined;
+var events: wio.EventQueue = .empty;
 
 const DemoAction = enum(zmenu.ActionId) {
     say_hello = 0,
@@ -19,10 +20,10 @@ const DemoAction = enum(zmenu.ActionId) {
 };
 
 const file_items = [_]zmenu.Item{
-    .{ .action = .{ .title = "Say Hello", .action_id = @intFromEnum(DemoAction.say_hello), .shortcut = .{ .key = .h, .primary = true } } },
+    .{ .action = .{ .title = "Say Hello", .action_id = @backingInt(DemoAction.say_hello), .shortcut = .{ .key = .h, .primary = true } } },
 };
 const help_items = [_]zmenu.Item{
-    .{ .action = .{ .title = "About", .action_id = @intFromEnum(DemoAction.about) } },
+    .{ .action = .{ .title = "About", .action_id = @backingInt(DemoAction.about) } },
 };
 const menus = [_]zmenu.Menu{
     .{ .title = "File", .items = &file_items },
@@ -34,9 +35,10 @@ pub fn main(init: std.process.Init) !void {
     const gpa = init.gpa;
     const io = init.io;
 
-    try wio.init(gpa, io, .{});
+    try wio.init(.{ .allocator = gpa, .io = io, .eventFn = wio.EventQueue.eventFn });
 
-    window = try wio.createWindow(.{
+    window = try wio.Window.create(.{
+        .event_fn_data = &events,
         .title = "zmenu + wio (native menus)",
         .scale = 1,
         .size = .{ .width = 560, .height = 360 },
@@ -52,10 +54,11 @@ pub fn main(init: std.process.Init) !void {
 }
 
 fn loop() !bool {
-    while (window.getEvent()) |event| {
+    while (events.pop()) |event| {
         switch (event) {
             .close => {
                 window.destroy();
+                events.deinit();
                 wio.deinit();
                 return false;
             },

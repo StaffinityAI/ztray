@@ -212,7 +212,7 @@ pub fn drawMenuBar() !void {
     try syncMenuKeybinds(win);
     dispatchMenuShortcuts();
 
-    const bg_box = dvui.box(@src(), .{ .dir = .vertical }, .{ .expand = .horizontal, .background = false, .color_fill = dvui.themeGet().color(.control, .fill) });
+    const bg_box = dvui.box(@src(), .{ .dir = .vertical }, .{ .expand = .horizontal, .background = false, .color_fill = .{ .color = dvui.themeGet().color(.control, .fill) } });
     defer bg_box.deinit();
 
     var m = dvui.menu(@src(), .horizontal, .{});
@@ -232,7 +232,7 @@ pub fn drawMenuBar() !void {
     for (menu_bar.menus, 0..) |menu, mi| {
         if (menuItemTop(@src(), menu.title, .{ .submenu = true }, .{
             .expand = .horizontal,
-            .color_text = dvui.themeGet().color(.control, .text),
+            .color_text = .{ .color = dvui.themeGet().color(.control, .text) },
             .id_extra = topMenuBarItemId(mi),
         })) |r| {
             var animator = dvui.animate(@src(), .{ .kind = .alpha, .duration = 250_000 }, .{
@@ -297,7 +297,7 @@ fn menuLeafAction(src: std.builtin.SourceLocation, title: []const u8, shortcut_b
     title_opts.margin = dvui.Rect.all(0);
     title_opts.padding = dvui.Rect.all(0);
     title_opts.gravity_y = 0.5;
-    if (!enabled) title_opts.color_text = dvui.themeGet().color(.control, .text).opacity(0.35);
+    if (!enabled) title_opts.color_text = .{ .color = dvui.themeGet().color(.control, .text).opacity(0.35) };
     dvui.labelNoFmt(@src(), title, .{}, title_opts);
 
     if (shortcut_bracketed) |sc| {
@@ -309,7 +309,7 @@ fn menuLeafAction(src: std.builtin.SourceLocation, title: []const u8, shortcut_b
         sc_opts.padding = dvui.Rect.all(0);
         sc_opts.gravity_y = 0.5;
         const base = dvui.themeGet().color(.control, .text);
-        sc_opts.color_text = if (enabled) base.opacity(0.48) else base.opacity(0.28);
+        sc_opts.color_text = .{ .color = if (enabled) base.opacity(0.48) else base.opacity(0.28) };
         dvui.labelNoFmt(@src(), sc, .{}, sc_opts);
     }
 

@@ -8,29 +8,28 @@ Cross-platform **menu bar** and **system tray** for Zig.
 | Windows  | Win32 `HMENU` + `comctl32` | `Shell_NotifyIcon` |
 | Linux    | DBusMenu over D-Bus | StatusNotifierItem |
 
-An optional **in-app** DVUI menu bar is available via `ztray.dvui_menu` when you use `createZtrayDvuiModule`. The core module never imports DVUI. Tray is always native.
+An optional **in-app** DVUI menu bar is available via `zmenu.dvui_menu` when you use `createZmenuDvuiModule`. The core module never imports DVUI. Tray is always native.
 
 ---
 
 ## Requirements
 
-- Zig **0.16.0** or newer
+- Zig **0.17.0**
 
 ---
 
 ## Setup
 
-Add a path (or fetched) dependency. Import its build API with `@import("ztray")`, then use matching `target` / `optimize` values.
+Add a path (or fetched) dependency in `build.zig.zon`, then use matching
+`target` / `optimize` values. Native module consumers do not enable the optional
+DVUI or wio examples and do not acquire their dependencies.
 
 ### Native menus / tray only
 
 ```zig
-const ztray = @import("ztray");
-
-const zmenu_mod = ztray.createZmenuModule(b, target, optimize);
-const ztray_mod = ztray.createZtrayModule(b, target, optimize, zmenu_mod);
-exe.addImport("zmenu", zmenu_mod);
-exe.addImport("ztray", ztray_mod);
+const dep = b.dependency("ztray", .{ .target = target, .optimize = optimize });
+exe.root_module.addImport("zmenu", dep.module("zmenu"));
+exe.root_module.addImport("ztray", dep.module("ztray"));
 ```
 
 ### Native + DVUI in-app menu bar
@@ -48,8 +47,8 @@ const zmenu_dvui = ztray.createZmenuDvuiModule(
     dvui_mod,
     sdl_mod,
 );
-exe.addImport("zmenu", zmenu_dvui);
-exe.addImport("ztray", ztray_mod);
+exe.root_module.addImport("zmenu", zmenu_dvui);
+exe.root_module.addImport("ztray", ztray_mod);
 ```
 
 Use `zmenu.dvui_menu` for in-app calls. Use `zmenu.installMainMenuForSdlDvuiWindow` to get the native `HWND` from SDL automatically on Windows.
@@ -57,8 +56,7 @@ Use `zmenu.dvui_menu` for in-app calls. Use `zmenu.installMainMenuForSdlDvuiWind
 ### Optional window frame chrome (`zwindow`)
 
 ```zig
-const zwindow_mod = createZwindowModule(…);
-exe.addImport("zwindow", zwindow_mod);
+exe.root_module.addImport("zwindow", dep.module("zwindow"));
 ```
 
 | OS | Call | Notes |
@@ -98,23 +96,28 @@ On Linux, native menus require a session D-Bus and an AppMenu registrar. The com
 
 ## Supported targets
 
-The compile CI matrix covers Linux x86_64 and aarch64, plus Windows x86_64 and ARM64. Native CI runs on current macOS, Windows, and Linux runners. Linux native builds require `libdbus-1-dev`; desktop-visible menu, tray, and compositor behavior still requires smoke testing on the target environment.
+The native menu/tray compile CI matrix covers Linux x86_64 and aarch64, plus Windows x86_64 and ARM64. Example CI builds on current macOS, Windows, and Linux runners. Linux native builds require `libdbus-1-dev` and window chrome requires `libx11-dev`; desktop-visible menu, tray, and compositor behavior still requires smoke testing on the target environment.
 
 ```sh
-zig fetch        # resolve lazy deps (dvui, wio) for examples
-zig build
+zig build        # compile/link the native tray without launching
 zig build test   # unit tests
-zig build ci     # cross-build examples (Linux: x11 / wayland / both × arches)
+zig build ci     # cross-compile native menu/tray without example dependencies
+zig build -Dexamples=true    # install native examples without launching
 ```
 
 ### Build flags
 
 | Flag | Meaning |
 |------|---------|
+| `-Dexamples=true` | Enable optional DVUI/wio examples and their dependencies |
+| `-Dcross-examples=true` | Expose `ci-examples` with `-Dexamples=true`; target X11/desktop libraries must be available |
 | `-Dforce_dvui_menu=true` | Force DVUI in-app menu bar in the `ztray-dvui` sample |
 | `-Dzwindow_unix_backends` | Comma list: `x11`, `wayland` (default: `x11,wayland`) |
 
 ### Examples
+
+Pass `-Dexamples=true` to each example command below. Running an example opens
+native desktop windows or a tray; compilation and unit tests do not.
 
 | Step | Binary | Notes |
 |------|--------|-------|

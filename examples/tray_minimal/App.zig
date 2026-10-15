@@ -18,12 +18,12 @@ const TrayAction = enum(c_int) {
 const items = [_]ztray.Item{
     .{ .action = .{
         .title = "Say hello",
-        .action_id = @intFromEnum(TrayAction.hello),
+        .action_id = @backingInt(TrayAction.hello),
     } },
     .separator,
     .{ .action = .{
         .title = "Quit",
-        .action_id = @intFromEnum(TrayAction.quit),
+        .action_id = @backingInt(TrayAction.quit),
     } },
 };
 

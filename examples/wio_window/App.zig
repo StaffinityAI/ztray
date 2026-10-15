@@ -16,6 +16,7 @@ comptime {
 }
 
 var window: wio.Window = undefined;
+var events: wio.EventQueue = .empty;
 
 fn applyZwindowFrameChrome() void {
     switch (builtin.os.tag) {
@@ -26,11 +27,11 @@ fn applyZwindowFrameChrome() void {
         .linux => {
             var frame = switch (wio.backend.active) {
                 .x11 => zwindow.LinuxFrameTarget.fromX11(
-                    @ptrCast(wio.backend.x11.display),
+                    @ptrCast(wio.backend.x11.globals.display),
                     window.backend.x11.window,
                 ),
                 .wayland => zwindow.LinuxFrameTarget.fromWayland(
-                    @ptrCast(wio.backend.wayland.display),
+                    @ptrCast(wio.backend.wayland.globals.display),
                     @ptrCast(window.backend.wayland.surface),
                 ),
             };
@@ -44,9 +45,10 @@ pub fn main(init: std.process.Init) !void {
     const gpa = init.gpa;
     const io = init.io;
 
-    try wio.init(gpa, io, .{});
+    try wio.init(.{ .allocator = gpa, .io = io, .eventFn = wio.EventQueue.eventFn });
 
-    window = try wio.createWindow(.{
+    window = try wio.Window.create(.{
+        .event_fn_data = &events,
         .title = "zwindow + wio",
         .scale = 1,
         .size = .{ .width = 520, .height = 340 },
@@ -58,10 +60,11 @@ pub fn main(init: std.process.Init) !void {
 }
 
 fn loop() !bool {
-    while (window.getEvent()) |event| {
+    while (events.pop()) |event| {
         switch (event) {
             .close => {
                 window.destroy();
+                events.deinit();
                 wio.deinit();
                 return false;
             },

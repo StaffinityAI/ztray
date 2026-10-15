@@ -16,6 +16,7 @@ comptime {
 extern fn NSApplicationLoad() void;
 
 var window: wio.Window = undefined;
+var events: wio.EventQueue = .empty;
 
 const MenuBarAction = enum(zmenu.ActionId) {
     say_hello = 0,
@@ -28,10 +29,10 @@ const TrayAction = enum(c_int) {
 };
 
 const file_items = [_]zmenu.Item{
-    .{ .action = .{ .title = "Say Hello", .action_id = @intFromEnum(MenuBarAction.say_hello), .shortcut = .{ .key = .h, .primary = true } } },
+    .{ .action = .{ .title = "Say Hello", .action_id = @backingInt(MenuBarAction.say_hello), .shortcut = .{ .key = .h, .primary = true } } },
 };
 const help_items = [_]zmenu.Item{
-    .{ .action = .{ .title = "About", .action_id = @intFromEnum(MenuBarAction.about) } },
+    .{ .action = .{ .title = "About", .action_id = @backingInt(MenuBarAction.about) } },
 };
 const menus = [_]zmenu.Menu{
     .{ .title = "File", .items = &file_items },
@@ -40,9 +41,9 @@ const menus = [_]zmenu.Menu{
 const menu_bar: zmenu.MenuBar = .{ .menus = &menus };
 
 const tray_items = [_]zmenu.Item{
-    .{ .action = .{ .title = "Say hello (tray)", .action_id = @intFromEnum(TrayAction.hello) } },
+    .{ .action = .{ .title = "Say hello (tray)", .action_id = @backingInt(TrayAction.hello) } },
     .separator,
-    .{ .action = .{ .title = "Quit", .action_id = @intFromEnum(TrayAction.quit) } },
+    .{ .action = .{ .title = "Quit", .action_id = @backingInt(TrayAction.quit) } },
 };
 const tray_menu: ztray.TrayMenu = .{ .title = "Tray", .items = &tray_items };
 
@@ -54,8 +55,8 @@ fn applyFrameChrome() void {
         ),
         .linux => {
             var frame = switch (wio.backend.active) {
-                .x11 => zwindow.LinuxFrameTarget.fromX11(@ptrCast(wio.backend.x11.display), window.backend.x11.window),
-                .wayland => zwindow.LinuxFrameTarget.fromWayland(@ptrCast(wio.backend.wayland.display), @ptrCast(window.backend.wayland.surface)),
+                .x11 => zwindow.LinuxFrameTarget.fromX11(@ptrCast(wio.backend.x11.globals.display), window.backend.x11.window),
+                .wayland => zwindow.LinuxFrameTarget.fromWayland(@ptrCast(wio.backend.wayland.globals.display), @ptrCast(window.backend.wayland.surface)),
             };
             zwindow.setFrameChrome(@ptrCast(&frame), .{ .r = 0.12, .g = 0.13, .b = 0.17, .dark = true });
         },
@@ -67,10 +68,11 @@ pub fn main(init: std.process.Init) !void {
     const gpa = init.gpa;
     const io = init.io;
 
-    try wio.init(gpa, io, .{});
+    try wio.init(.{ .allocator = gpa, .io = io, .eventFn = wio.EventQueue.eventFn });
     if (builtin.os.tag == .macos) NSApplicationLoad();
 
-    window = try wio.createWindow(.{
+    window = try wio.Window.create(.{
+        .event_fn_data = &events,
         .title = "zmenu + ztray + wio",
         .scale = 1,
         .size = .{ .width = 560, .height = 360 },
@@ -107,11 +109,12 @@ pub fn main(init: std.process.Init) !void {
 }
 
 fn loop() !bool {
-    while (window.getEvent()) |event| {
+    while (events.pop()) |event| {
         switch (event) {
             .close => {
                 ztray.shutdownTray();
                 window.destroy();
+                events.deinit();
                 wio.deinit();
                 return false;
             },

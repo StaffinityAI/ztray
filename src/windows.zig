@@ -137,11 +137,11 @@ const NOTIFYICONDATAW = extern struct {
     szTip: [128]WCHAR,
     dwState: DWORD = 0,
     dwStateMask: DWORD = 0,
-    szInfo: [256]WCHAR = [_]WCHAR{0} ** 256,
+    szInfo: [256]WCHAR = @splat(0),
     uVersion: UINT = 0,
-    szInfoTitle: [64]WCHAR = [_]WCHAR{0} ** 64,
+    szInfoTitle: [64]WCHAR = @splat(0),
     dwInfoFlags: DWORD = 0,
-    guidItem: [16]u8 = [_]u8{0} ** 16,
+    guidItem: [16]u8 = @splat(0),
     hBalloonIcon: HICON = null,
 };
 
@@ -415,7 +415,7 @@ pub fn shutdownTray() void {
             .uFlags = 0,
             .uCallbackMessage = 0,
             .hIcon = null,
-            .szTip = [_]WCHAR{0} ** 128,
+            .szTip = @splat(0),
         };
         _ = Shell_NotifyIconW(NIM_DELETE, &nid);
         if (tray_icon_destroy_on_shutdown) {

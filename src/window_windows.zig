@@ -4,7 +4,7 @@
 const win32 = @import("win32");
 const common = @import("window_common.zig");
 
-extern "kernel32" fn FreeLibrary(hModule: ?win32.foundation.HINSTANCE) callconv(.winapi) win32.foundation.BOOL;
+extern "kernel32" fn FreeLibrary(hModule: ?win32.foundation.HINSTANCE) callconv(.winapi) i32;
 
 // Windows 11 (Build 22621+): System backdrop and extended frame for title bar drawing.
 const DWMWA_SYSTEMBACKDROP_TYPE: u32 = 38; // Windows 11 SDK
@@ -82,7 +82,7 @@ const WM_NCMOUSEMOVE: u32 = 0x00A0;
 
 /// System caption button width (SM_CXSIZE / index 30), with a minimum so hit-testing and layout stay aligned.
 fn captionButtonWidth() i32 {
-    var w = win32.ui.windows_and_messaging.GetSystemMetrics(@as(win32.ui.windows_and_messaging.SYSTEM_METRICS_INDEX, @enumFromInt(30)));
+    var w = win32.ui.windows_and_messaging.GetSystemMetrics(@as(win32.ui.windows_and_messaging.SYSTEM_METRICS_INDEX, @fromBackingInt(@intCast(30))));
     if (w < 40) w = 40;
     return w;
 }
@@ -90,7 +90,7 @@ fn captionButtonWidth() i32 {
 fn win32CaptionButtonHit(hWnd: ?win32.foundation.HWND, client_x: i32, client_y: i32) ?i32 {
     var rect: win32.foundation.RECT = undefined;
     if (win32.ui.windows_and_messaging.GetClientRect(hWnd, &rect) == 0) return null;
-    const caption_h = win32.ui.windows_and_messaging.GetSystemMetrics(@as(win32.ui.windows_and_messaging.SYSTEM_METRICS_INDEX, @enumFromInt(4)));
+    const caption_h = win32.ui.windows_and_messaging.GetSystemMetrics(@as(win32.ui.windows_and_messaging.SYSTEM_METRICS_INDEX, @fromBackingInt(@intCast(4))));
     const btn_w = captionButtonWidth();
     const right = rect.right;
     if (client_y >= 0 and client_y < caption_h and client_x >= right - 3 * btn_w) {
@@ -104,11 +104,11 @@ fn win32CaptionButtonHit(hWnd: ?win32.foundation.HWND, client_x: i32, client_y: 
 fn win32MicaSubclassProc(
     hWnd: ?win32.foundation.HWND,
     uMsg: u32,
-    wParam: win32.foundation.WPARAM,
-    lParam: win32.foundation.LPARAM,
+    wParam: usize,
+    lParam: isize,
     uIdSubclass: usize,
     dwRefData: usize,
-) callconv(.winapi) win32.foundation.LRESULT {
+) callconv(.winapi) isize {
     _ = uIdSubclass;
     _ = dwRefData;
     if (uMsg == win32.ui.windows_and_messaging.WM_ACTIVATE or
@@ -117,7 +117,7 @@ fn win32MicaSubclassProc(
         const backdrop_type: u32 = DWMSBT_TRANSIENTWINDOW;
         _ = win32.graphics.dwm.DwmSetWindowAttribute(
             hWnd,
-            @as(win32.graphics.dwm.DWMWINDOWATTRIBUTE, @enumFromInt(DWMWA_SYSTEMBACKDROP_TYPE)),
+            @as(win32.graphics.dwm.DWMWINDOWATTRIBUTE, @fromBackingInt(@intCast(DWMWA_SYSTEMBACKDROP_TYPE))),
             &backdrop_type,
             @sizeOf(u32),
         );
@@ -148,35 +148,35 @@ fn win32MicaSubclassProc(
         const right = rect.right;
         if (x < left or x >= right or y < top or y >= bottom) return def;
 
-        const frame_w = @max(win32.ui.windows_and_messaging.GetSystemMetrics(@as(win32.ui.windows_and_messaging.SYSTEM_METRICS_INDEX, @enumFromInt(SM_CXSIZEFRAME))), 4);
-        const frame_h = @max(win32.ui.windows_and_messaging.GetSystemMetrics(@as(win32.ui.windows_and_messaging.SYSTEM_METRICS_INDEX, @enumFromInt(SM_CYSIZEFRAME))), 4);
-        const caption_h = win32.ui.windows_and_messaging.GetSystemMetrics(@as(win32.ui.windows_and_messaging.SYSTEM_METRICS_INDEX, @enumFromInt(4)));
+        const frame_w = @max(win32.ui.windows_and_messaging.GetSystemMetrics(@as(win32.ui.windows_and_messaging.SYSTEM_METRICS_INDEX, @fromBackingInt(@intCast(SM_CXSIZEFRAME)))), 4);
+        const frame_h = @max(win32.ui.windows_and_messaging.GetSystemMetrics(@as(win32.ui.windows_and_messaging.SYSTEM_METRICS_INDEX, @fromBackingInt(@intCast(SM_CYSIZEFRAME)))), 4);
+        const caption_h = win32.ui.windows_and_messaging.GetSystemMetrics(@as(win32.ui.windows_and_messaging.SYSTEM_METRICS_INDEX, @fromBackingInt(@intCast(4))));
         const btn_w = captionButtonWidth();
 
         if (x < left + frame_w) {
-            if (y < top + frame_h) return @as(win32.foundation.LRESULT, @intCast(HTTOPLEFT));
-            if (y >= bottom - frame_h) return @as(win32.foundation.LRESULT, @intCast(HTBOTTOMLEFT));
-            return @as(win32.foundation.LRESULT, @intCast(HTLEFT));
+            if (y < top + frame_h) return @as(isize, @intCast(HTTOPLEFT));
+            if (y >= bottom - frame_h) return @as(isize, @intCast(HTBOTTOMLEFT));
+            return @as(isize, @intCast(HTLEFT));
         }
         if (x >= right - frame_w) {
-            if (y < top + frame_h) return @as(win32.foundation.LRESULT, @intCast(HTTOPRIGHT));
-            if (y >= bottom - frame_h) return @as(win32.foundation.LRESULT, @intCast(HTBOTTOMRIGHT));
-            return @as(win32.foundation.LRESULT, @intCast(HTRIGHT));
+            if (y < top + frame_h) return @as(isize, @intCast(HTTOPRIGHT));
+            if (y >= bottom - frame_h) return @as(isize, @intCast(HTBOTTOMRIGHT));
+            return @as(isize, @intCast(HTRIGHT));
         }
         if (y >= bottom - frame_h) {
-            if (x < left + frame_w) return @as(win32.foundation.LRESULT, @intCast(HTBOTTOMLEFT));
-            if (x >= right - frame_w) return @as(win32.foundation.LRESULT, @intCast(HTBOTTOMRIGHT));
-            return @as(win32.foundation.LRESULT, @intCast(HTBOTTOM));
+            if (x < left + frame_w) return @as(isize, @intCast(HTBOTTOMLEFT));
+            if (x >= right - frame_w) return @as(isize, @intCast(HTBOTTOMRIGHT));
+            return @as(isize, @intCast(HTBOTTOM));
         }
-        if (y < top + frame_h) return @as(win32.foundation.LRESULT, @intCast(HTTOP));
+        if (y < top + frame_h) return @as(isize, @intCast(HTTOP));
 
         if (y < top + caption_h) {
             if (x >= right - 3 * btn_w) {
-                if (x >= right - btn_w) return @as(win32.foundation.LRESULT, @intCast(HTCLOSE));
-                if (x >= right - 2 * btn_w) return @as(win32.foundation.LRESULT, @intCast(HTMAXBUTTON));
-                return @as(win32.foundation.LRESULT, @intCast(HTMINBUTTON));
+                if (x >= right - btn_w) return @as(isize, @intCast(HTCLOSE));
+                if (x >= right - 2 * btn_w) return @as(isize, @intCast(HTMAXBUTTON));
+                return @as(isize, @intCast(HTMINBUTTON));
             }
-            return @as(win32.foundation.LRESULT, @intCast(HTCAPTION));
+            return @as(isize, @intCast(HTCAPTION));
         }
         return def;
     }
@@ -189,14 +189,14 @@ fn win32MicaSubclassProc(
             if (win32.graphics.gdi.ClientToScreen(hWnd, &pt) != 0) {
                 const x16 = @as(u16, @bitCast(@as(i16, @intCast(pt.x))));
                 const y16 = @as(u16, @bitCast(@as(i16, @intCast(pt.y))));
-                const nc_lparam: win32.foundation.LPARAM = @intCast((@as(u32, x16)) | (@as(u32, y16) << 16));
+                const nc_lparam: isize = @intCast((@as(u32, x16)) | (@as(u32, y16) << 16));
                 const nc_msg = switch (uMsg) {
                     WM_LBUTTONDOWN => WM_NCLBUTTONDOWN,
                     WM_LBUTTONUP => WM_NCLBUTTONUP,
                     WM_MOUSEMOVE => WM_NCMOUSEMOVE,
                     else => unreachable,
                 };
-                return win32.ui.windows_and_messaging.DefWindowProcW(hWnd, nc_msg, @as(win32.foundation.WPARAM, @intCast(hit_code)), nc_lparam);
+                return win32.ui.windows_and_messaging.DefWindowProcW(hWnd, nc_msg, @as(usize, @intCast(hit_code)), nc_lparam);
             }
         }
     }
@@ -210,7 +210,7 @@ pub fn applyTransparentTitlebar(window: *anyopaque) void {
     const backdrop_type: u32 = DWMSBT_TRANSIENTWINDOW;
     _ = win32.graphics.dwm.DwmSetWindowAttribute(
         hwnd_h,
-        @as(win32.graphics.dwm.DWMWINDOWATTRIBUTE, @enumFromInt(DWMWA_SYSTEMBACKDROP_TYPE)),
+        @as(win32.graphics.dwm.DWMWINDOWATTRIBUTE, @fromBackingInt(@intCast(DWMWA_SYSTEMBACKDROP_TYPE))),
         &backdrop_type,
         @sizeOf(u32),
     );
@@ -250,7 +250,7 @@ fn setVibrantChrome(window: *anyopaque, _: f64, _: f64, _: f64, _: f64, _: bool)
 
     _ = win32.ui.windows_and_messaging.SetLayeredWindowAttributes(
         hwnd_h,
-        0,
+        @bitCast(@as(u32, 0)),
         255,
         win32.ui.windows_and_messaging.LWA_ALPHA,
     );
@@ -260,7 +260,7 @@ pub fn titleBarButtonAt(hwnd: *anyopaque, client_x: i32, client_y: i32) ?common.
     const h: win32.foundation.HWND = @ptrCast(hwnd);
     var rect: win32.foundation.RECT = undefined;
     if (win32.ui.windows_and_messaging.GetClientRect(h, &rect) == 0) return null;
-    const caption_h = win32.ui.windows_and_messaging.GetSystemMetrics(@as(win32.ui.windows_and_messaging.SYSTEM_METRICS_INDEX, @enumFromInt(4)));
+    const caption_h = win32.ui.windows_and_messaging.GetSystemMetrics(@as(win32.ui.windows_and_messaging.SYSTEM_METRICS_INDEX, @fromBackingInt(@intCast(4))));
     const btn_w = captionButtonWidth();
     const width = rect.right;
     if (client_y < 0 or client_y >= caption_h) return null;
@@ -277,7 +277,7 @@ pub fn performTitleBarButton(hwnd: *anyopaque, button: common.TitleBarButton) vo
     const SC_MAXIMIZE: usize = 0xF030;
     const SC_RESTORE: usize = 0xF120;
     const SC_CLOSE: usize = 0xF060;
-    const wparam: win32.foundation.WPARAM = switch (button) {
+    const wparam: usize = switch (button) {
         .minimize => SC_MINIMIZE,
         .maximize => if (win32.ui.windows_and_messaging.IsZoomed(hwnd_h) != 0) SC_RESTORE else SC_MAXIMIZE,
         .close => SC_CLOSE,

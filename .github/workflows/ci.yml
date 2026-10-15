@@ -11,45 +11,26 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os:
-          - macos-latest
-          - ubuntu-latest
-          - windows-latest
+        os: [macos-latest, ubuntu-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
-
       - uses: mlugg/setup-zig@v2
         with:
-          version: 0.16.0
-
+          version: 0.17.0
       - name: Install Linux D-Bus development files
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install --yes libdbus-1-dev
-
-      - name: Fetch lazy dependencies
-        run: zig fetch
-
+        run: sudo apt-get update && sudo apt-get install --yes libdbus-1-dev libx11-dev
       - name: Check Zig formatting
-        shell: bash
-        run: test -z "$(zig fmt --check build.zig src examples)"
-
+        run: zig fmt --check build.zig build.zig.zon src examples
       - name: Check Linux native C sources
         if: runner.os == 'Linux'
         run: cc -Wall -Wextra -Werror -fsyntax-only $(pkg-config --cflags dbus-1) src/linux_dbus_menu.c src/linux_tray_png.c
-
-      - name: Run tests
-        run: zig build test
-
-      - name: Build native examples
-        run: zig build
-
-      - name: Build with an isolated Linux session bus
-        if: runner.os == 'Linux'
-        run: dbus-run-session -- zig build
-
-      - name: Cross-build examples
+      - name: Test and link native tray without launching
+        run: zig build test check
+      - name: Build native examples without launching
+        run: zig build -Dexamples=true
+      - name: Cross-build native menu and tray
         run: zig build ci
-
       - name: Rebuild from a clean Zig cache
         shell: bash
-        run: rm -rf .zig-cache && zig build test && zig build ci
+        run: rm -rf .zig-cache && zig build test check

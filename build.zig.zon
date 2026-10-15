@@ -2,25 +2,26 @@
     .name = .ztray,
     .version = "0.1.0-dev.1",
     .fingerprint = 0x935717f8eccb911d,
-    .minimum_zig_version = "0.16.0",
+    .minimum_zig_version = "0.17.0",
     .dependencies = .{
         .dvui = .{
-            .url = "git+https://github.com/david-vanderson/dvui.git#14703fa6d6fea0c608886b5ce2071ef49323c8c0",
-            .hash = "dvui-0.5.0-dev-AQFJmbHY9QA1qvhf_l3RPazRT7QOF0pGjLtU4amMq2F-",
+            .url = "git+https://github.com/david-vanderson/dvui.git#42a68b9277b1440897909f3edc7fe3f6c8cb701c",
+            .hash = "dvui-0.6.0-dev-AQFJmcYbBAEymq0cKpazU5jM0uRuxqSYcVFEYTlbxw54",
             .lazy = true,
         },
         .wio = .{
-            .url = "git+https://github.com/ypsvlq/wio.git#d4f6edda8d1b96d373f82f4fc3f3bc9e17bf0973",
-            .hash = "wio-0.0.0-8xHrr2NUBwDbiM9tD7NkxgYJQjsTIUofdra3bfhjSGVH",
+            .url = "git+https://github.com/ypsvlq/wio.git#e923d9051d2fae9125bcd3b255cea7f28105dcb3",
+            .hash = "wio-0.0.0-8xHrr3oTCAAXDVug4r82SZYOjCKJUdLU2JlUrwjCQee_",
             .lazy = true,
         },
         .win32 = .{
-            .url = "git+https://github.com/marlersoft/zigwin32.git#ec98bb4d9eea532320a8551720a9e3ec6de64994",
-            .hash = "win32-25.0.28-preview-mX5pFWMt5QPTVIGh3r2-OpPunpcCCjApyRbA6Zn6WALH",
+            .url = "git+https://github.com/marlersoft/zigwin32.git#052701929e21dd6d16abddac76a271ae62b05584",
+            .hash = "win32-42.0.39-preview-mX5pFX-N2wPkrDlXokcZEv190pMpU8HDo_v4Mz2nxs8x",
             .lazy = true,
         },
     },
     .paths = .{
+        ".zigversion",
         "README.md",
         "build.zig",
         "build.zig.zon",

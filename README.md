@@ -96,7 +96,7 @@ On Linux, native menus require a session D-Bus and an AppMenu registrar. The com
 
 ## Supported targets
 
-The native menu/tray compile CI matrix covers Linux x86_64 and aarch64, plus Windows x86_64 and ARM64. Example CI builds on current macOS, Windows, and Linux runners. Linux native builds require `libdbus-1-dev` and window chrome requires `libx11-dev`; desktop-visible menu, tray, and compositor behavior still requires smoke testing on the target environment.
+The native menu/tray compile CI matrix covers Linux x86_64 and aarch64, plus Windows x86_64 and ARM64. Example CI builds on current macOS, Windows, and Linux runners. Linux builds for the default native target require `libdbus-1-dev` and window chrome requires `libx11-dev`. Explicit Linux targets such as `-Dtarget=x86_64-linux-gnu` link a D-Bus stub whose menu and tray installation returns `error.DBusUnavailable` or `error.TrayInstallFailed`; desktop-visible menu, tray, and compositor behavior still requires smoke testing on the target environment.
 
 ```sh
 zig build        # compile/link the native tray without launching

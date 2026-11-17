@@ -35,6 +35,13 @@ pub const ZwindowUnixBackends = enum {
     }
 };
 
+/// Zig adds host system include and library search paths only for native OS/ABI
+/// queries, so an explicitly resolved Linux target cannot find `dbus-1` even on a
+/// matching Linux host.
+fn isNativeLinux(target: std.Build.ResolvedTarget) bool {
+    return target.result.os.tag == .linux and target.query.isNativeOs() and target.query.isNativeAbi();
+}
+
 fn linkNativeMenuBar(mod: *std.Build.Module, b: *std.Build, target: std.Build.ResolvedTarget) void {
     switch (target.result.os.tag) {
         .macos => {
@@ -46,10 +53,7 @@ fn linkNativeMenuBar(mod: *std.Build.Module, b: *std.Build, target: std.Build.Re
             mod.linkSystemLibrary("user32", .{});
         },
         .linux => {
-            const native_linux = b.graph.host.result.os.tag == .linux and
-                b.graph.host.result.cpu.arch == target.result.cpu.arch and
-                b.graph.host.result.abi == target.result.abi;
-            if (native_linux) {
+            if (isNativeLinux(target)) {
                 mod.addCSourceFile(.{ .file = b.path("src/linux_dbus_menu.c") });
                 mod.addCSourceFile(.{ .file = b.path("src/linux_tray_png.c") });
                 mod.linkSystemLibrary("dbus-1", .{});
@@ -281,8 +285,8 @@ fn addTrayMinimalExe(
     return b.addExecutable(.{ .name = exe_name, .root_module = example_mod });
 }
 
-fn linkLinuxDynamic(exe: *std.Build.Step.Compile, host_os: std.Target.Os.Tag, target_os: std.Target.Os.Tag) void {
-    if (target_os == .linux and host_os == .linux) exe.linkage = .dynamic;
+fn linkLinuxDynamic(exe: *std.Build.Step.Compile, target: std.Build.ResolvedTarget) void {
+    if (isNativeLinux(target)) exe.linkage = .dynamic;
 }
 
 pub fn build(b: *std.Build) void {
@@ -324,7 +328,7 @@ pub fn build(b: *std.Build) void {
 
             {
                 const exe = addWioMenuExe(b, zmenu_mod, wio_mod, target, optimize, "zmenu-wio");
-                linkLinuxDynamic(exe, b.graph.host.result.os.tag, target.result.os.tag);
+                linkLinuxDynamic(exe, target);
                 b.installArtifact(exe);
                 const run_cmd = b.addRunArtifact(exe);
                 run_cmd.step.dependOn(b.getInstallStep());
@@ -335,7 +339,7 @@ pub fn build(b: *std.Build) void {
 
             {
                 const exe = addWioTrayExe(b, zmenu_mod, ztray_mod, zwindow_mod, wio_mod, target, optimize, "ztray-wio-tray");
-                linkLinuxDynamic(exe, b.graph.host.result.os.tag, target.result.os.tag);
+                linkLinuxDynamic(exe, target);
                 b.installArtifact(exe);
                 const run_cmd = b.addRunArtifact(exe);
                 run_cmd.step.dependOn(b.getInstallStep());
@@ -357,7 +361,7 @@ pub fn build(b: *std.Build) void {
 
         {
             const exe = addTrayMinimalExe(b, ztray_mod, target, optimize, "ztray-minimal");
-            linkLinuxDynamic(exe, b.graph.host.result.os.tag, target.result.os.tag);
+            linkLinuxDynamic(exe, target);
             b.installArtifact(exe);
             const run_cmd = b.addRunArtifact(exe);
             run_cmd.step.dependOn(b.getInstallStep());
@@ -389,7 +393,7 @@ pub fn build(b: *std.Build) void {
 
     const check = b.step("check", "Compile and link the native tray without launching it");
     const smoke = addTrayMinimalExe(b, ztray_mod, target, optimize, "ztray-native-check");
-    linkLinuxDynamic(smoke, b.graph.host.result.os.tag, target.result.os.tag);
+    linkLinuxDynamic(smoke, target);
     check.dependOn(&smoke.step);
     _ = smoke.getEmittedBin();
     b.default_step = if (examples) b.getInstallStep() else check;
@@ -413,7 +417,7 @@ fn setupZtrayCi(b: *std.Build, ci_step: *std.Build.Step) void {
         const menu = createZmenuModule(b, resolved, .debug);
         const tray = createZtrayModule(b, resolved, .debug, menu);
         const exe = addTrayMinimalExe(b, tray, resolved, .debug, b.fmt("ztray-check-{s}-{s}", .{ @tagName(query.cpu_arch.?), @tagName(query.os_tag.?) }));
-        linkLinuxDynamic(exe, b.graph.host.result.os.tag, resolved.result.os.tag);
+        linkLinuxDynamic(exe, resolved);
         ci_step.dependOn(&exe.step);
         _ = exe.getEmittedBin();
     }
@@ -462,7 +466,7 @@ fn addZtrayCiExamplesForTarget(
 
     {
         const exe = addWioMenuExe(b, zmenu_mod, wio_mod, resolved, optimize, b.fmt("zmenu-wio-{s}-{s}", .{ arch_tag, os_tag }));
-        linkLinuxDynamic(exe, b.graph.host.result.os.tag, resolved.result.os.tag);
+        linkLinuxDynamic(exe, resolved);
         ci_step.dependOn(&exe.step);
     }
 
@@ -470,13 +474,13 @@ fn addZtrayCiExamplesForTarget(
         inline for (std.enums.values(ZwindowUnixBackends)) |zwb| {
             const zwindow_ci = createZwindowModule(b, resolved, optimize, zwb);
             const exe = addWioTrayExe(b, zmenu_mod, ztray_mod, zwindow_ci, wio_mod, resolved, optimize, b.fmt("ztray-wio-tray-{s}-{s}-zw-{s}", .{ arch_tag, os_tag, @tagName(zwb) }));
-            linkLinuxDynamic(exe, b.graph.host.result.os.tag, resolved.result.os.tag);
+            linkLinuxDynamic(exe, resolved);
             ci_step.dependOn(&exe.step);
         }
     } else {
         const zwindow_mod = createZwindowModule(b, resolved, optimize, .both);
         const exe = addWioTrayExe(b, zmenu_mod, ztray_mod, zwindow_mod, wio_mod, resolved, optimize, b.fmt("ztray-wio-tray-{s}-{s}", .{ arch_tag, os_tag }));
-        linkLinuxDynamic(exe, b.graph.host.result.os.tag, resolved.result.os.tag);
+        linkLinuxDynamic(exe, resolved);
         ci_step.dependOn(&exe.step);
     }
 
@@ -488,7 +492,7 @@ fn addZtrayCiExamplesForTarget(
 
     {
         const exe = addTrayMinimalExe(b, ztray_mod, resolved, optimize, b.fmt("ztray-minimal-{s}-{s}", .{ arch_tag, os_tag }));
-        linkLinuxDynamic(exe, b.graph.host.result.os.tag, resolved.result.os.tag);
+        linkLinuxDynamic(exe, resolved);
         ci_step.dependOn(&exe.step);
     }
 }

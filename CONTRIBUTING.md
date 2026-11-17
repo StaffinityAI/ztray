@@ -18,7 +18,9 @@ zig build -Dexamples=true
 
 The default build and `check` compile and link the native tray without launching
 it. `ci` cross-compiles and links native menu/tray binaries for Linux and Windows
-on x86_64 and aarch64. Optional examples enable DVUI and wio dependencies.
+on x86_64 and aarch64; its explicit Linux targets use the D-Bus stub, which
+reports menu and tray installation failure. Optional examples enable DVUI and
+wio dependencies.
 Cross-building the window examples additionally requires target system libraries;
 use `zig build ci-examples -Dexamples=true -Dcross-examples=true` with an appropriate
 sysroot. Compile checks do not establish native desktop behavior.

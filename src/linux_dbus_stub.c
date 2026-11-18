@@ -1,4 +1,5 @@
-/* No-op DBus menu: used when cross-compiling for Linux from a non-Linux host (no libdbus headers). */
+/* Unavailable D-Bus backend for non-native Linux targets, which have no host libdbus search paths.
+ * Install and update calls report failure so callers receive DBusUnavailable or TrayInstallFailed. */
 #include <stdint.h>
 
 typedef struct {
@@ -13,12 +14,12 @@ typedef struct {
 
 int ztray_linux_appmenu_registrar_has_owner(void) { return -1; }
 
-int ztray_linux_dbus_init(void) { return 1; }
+int ztray_linux_dbus_init(void) { return 0; }
 void ztray_linux_dbus_shutdown(void) {}
 int ztray_linux_dbus_set_items(const ZTrayLinuxItem *items, int n) {
     (void)items;
     (void)n;
-    return 1;
+    return 0;
 }
 void ztray_linux_dbus_dispatch(void) {}
 int ztray_linux_dbus_take_pending(void) { return -1; }
@@ -28,12 +29,12 @@ int ztray_linux_tray_install(const char *tooltip_utf8, const char *icon_name_or_
     (void)icon_name_or_null;
     (void)icon_png;
     (void)icon_png_len;
-    return 1;
+    return 0;
 }
 void ztray_linux_tray_shutdown(void) {}
 int ztray_linux_tray_set_items(const ZTrayLinuxItem *items, int n) {
     (void)items;
     (void)n;
-    return 1;
+    return 0;
 }
 int ztray_linux_tray_take_pending(void) { return -1; }

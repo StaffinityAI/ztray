@@ -18,12 +18,12 @@ const DemoAction = enum(zmenu.ActionId) {
 };
 
 const file_items = [_]zmenu.Item{
-    .{ .action = .{ .title = "Say Hello", .action_id = @intFromEnum(DemoAction.say_hello), .shortcut = .{ .key = .a, .primary = true } } },
+    .{ .action = .{ .title = "Say Hello", .action_id = @backingInt(DemoAction.say_hello), .shortcut = .{ .key = .a, .primary = true } } },
     .separator,
-    .{ .action = .{ .title = "Toggle DVUI Demo Window", .action_id = @intFromEnum(DemoAction.toggle_demo), .shortcut = .{ .key = .d, .primary = true } } },
+    .{ .action = .{ .title = "Toggle DVUI Demo Window", .action_id = @backingInt(DemoAction.toggle_demo), .shortcut = .{ .key = .d, .primary = true } } },
 };
 const help_items = [_]zmenu.Item{
-    .{ .action = .{ .title = "About zmenu fallback", .action_id = @intFromEnum(DemoAction.quit_hint) } },
+    .{ .action = .{ .title = "About zmenu fallback", .action_id = @backingInt(DemoAction.quit_hint) } },
 };
 const menus = [_]zmenu.Menu{
     .{ .title = "File", .items = &file_items },
@@ -48,7 +48,7 @@ pub fn AppInit(win: *dvui.Window) !void {
     };
 }
 
-pub fn AppDeinit() void {
+pub fn AppDeinit(_: *dvui.Window) void {
     zmenu.shutdownMenu();
 }
 
@@ -74,7 +74,7 @@ pub fn AppFrame() !dvui.App.Result {
     const hint =
         \\Default: native shell menu (Windows HMENU / macOS NSMenu / Linux D-Bus when an AppMenu registrar exists).
         \\On Linux without AppMenu registrar, falls back to in-app DVUI menu bar automatically.
-        \\Force in-app DVUI menu: zig build run-dvui -Dforce_dvui_menu=true
+        \\Force in-app DVUI menu: zig build run-dvui -Dexamples=true -Dforce_dvui_menu=true
     ;
     dvui.labelNoFmt(@src(), hint, .{}, .{ .expand = .horizontal });
     dvui.Examples.demo(.lite);

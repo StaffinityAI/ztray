@@ -60,7 +60,7 @@ fn appendDbusMenuRoot(allocator: std.mem.Allocator, flat: *std.ArrayList(LinuxIt
         .flags = FLAG_SUBMENU,
         .shortcut_modifiers = 0,
         .shortcut_key = 0,
-        .label = (try allocator.dupeZ(u8, "")).ptr,
+        .label = (try allocator.dupeSentinel(u8, "", 0)).ptr,
     });
     next_id.* = 1;
 }
@@ -83,7 +83,7 @@ fn appendMenuAsChildOf(
         .flags = FLAG_SUBMENU,
         .shortcut_modifiers = 0,
         .shortcut_key = 0,
-        .label = (try allocator.dupeZ(u8, menu.title)).ptr,
+        .label = (try allocator.dupeSentinel(u8, menu.title, 0)).ptr,
     });
 
     for (menu.items) |item| {
@@ -99,7 +99,7 @@ fn appendMenuAsChildOf(
                     .flags = FLAG_SEPARATOR,
                     .shortcut_modifiers = 0,
                     .shortcut_key = 0,
-                    .label = (try allocator.dupeZ(u8, "")).ptr,
+                    .label = (try allocator.dupeSentinel(u8, "", 0)).ptr,
                 });
             },
             .action => |a| {
@@ -116,7 +116,7 @@ fn appendMenuAsChildOf(
                     .flags = fl,
                     .shortcut_modifiers = if (a.shortcut) |shortcut| shortcutModifiers(shortcut) else 0,
                     .shortcut_key = if (a.shortcut) |shortcut| shortcut.key.keyEquivalentByte() else 0,
-                    .label = (try allocator.dupeZ(u8, a.title)).ptr,
+                    .label = (try allocator.dupeSentinel(u8, a.title, 0)).ptr,
                 });
             },
         }
@@ -156,9 +156,9 @@ pub fn installTrayIcon(allocator: std.mem.Allocator, tooltip: []const u8, icon_n
     if (tray_session_active.swap(true, .acq_rel)) return error.TrayAlreadyInstalled;
     errdefer _ = tray_session_active.store(false, .release);
 
-    const tip_z = try allocator.dupeZ(u8, tooltip);
+    const tip_z = try allocator.dupeSentinel(u8, tooltip, 0);
     defer allocator.free(tip_z);
-    const icon_z: ?[:0]u8 = if (icon_name) |n| try allocator.dupeZ(u8, n) else null;
+    const icon_z: ?[:0]u8 = if (icon_name) |n| try allocator.dupeSentinel(u8, n, 0) else null;
     defer if (icon_z) |z| allocator.free(z);
 
     const png = icon_png orelse "";
@@ -248,7 +248,7 @@ test "flattened menu returns MenuTooLarge at capacity" {
             .flags = FLAG_SEPARATOR,
             .shortcut_modifiers = 0,
             .shortcut_key = 0,
-            .label = (try allocator.dupeZ(u8, "")).ptr,
+            .label = (try allocator.dupeSentinel(u8, "", 0)).ptr,
         });
         next_id += 1;
     }

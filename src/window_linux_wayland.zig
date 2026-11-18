@@ -188,12 +188,12 @@ fn loadLib() ?std.DynLib {
 
 fn lookupFns(lib: *std.DynLib) ?Fns {
     var out: Fns = undefined;
-    inline for (@typeInfo(Fns).@"struct".fields) |field| {
-        const sym = lib.lookup(field.type, field.name) orelse {
-            log.debug("zwindow: missing symbol {s} in libwayland-client", .{field.name});
+    inline for (@typeInfo(Fns).@"struct".field_names) |name| {
+        const sym = lib.lookup(@FieldType(Fns, name), name) orelse {
+            log.debug("zwindow: missing symbol {s} in libwayland-client", .{name});
             return null;
         };
-        @field(out, field.name) = sym;
+        @field(out, name) = sym;
     }
     return out;
 }

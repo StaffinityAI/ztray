@@ -126,9 +126,9 @@ const macos = struct {
         if (!@This().active.swap(true, .acq_rel)) {} else return error.TrayAlreadyInstalled;
         errdefer _ = @This().active.store(false, .release);
 
-        const tip_z = try allocator.dupeZ(u8, tooltip);
+        const tip_z = try allocator.dupeSentinel(u8, tooltip, 0);
         defer allocator.free(tip_z);
-        const icon_z: ?[:0]u8 = if (icon_file) |p| try allocator.dupeZ(u8, p) else null;
+        const icon_z: ?[:0]u8 = if (icon_file) |p| try allocator.dupeSentinel(u8, p, 0) else null;
         defer if (icon_z) |z| allocator.free(z);
         const png = icon_png orelse "";
         const png_ptr: ?[*]const u8 = if (png.len > 0) png.ptr else null;
@@ -149,7 +149,7 @@ const macos = struct {
                     if (!ZTrayMacOSTrayAddSeparator()) return error.MenuInstallFailed;
                 },
                 .action => |action| {
-                    const item_title = try allocator.dupeZ(u8, action.title);
+                    const item_title = try allocator.dupeSentinel(u8, action.title, 0);
                     defer allocator.free(item_title);
                     var key_buf: [2]u8 = undefined;
                     const key_empty = [_:0]u8{0};
@@ -290,11 +290,11 @@ const NOTIFYICONDATAW = extern struct {
     szTip: [128]WCHAR,
     dwState: DWORD = 0,
     dwStateMask: DWORD = 0,
-    szInfo: [256]WCHAR = [_]WCHAR{0} ** 256,
+    szInfo: [256]WCHAR = @splat(0),
     uVersion: UINT = 0,
-    szInfoTitle: [64]WCHAR = [_]WCHAR{0} ** 64,
+    szInfoTitle: [64]WCHAR = @splat(0),
     dwInfoFlags: DWORD = 0,
-    guidItem: [16]u8 = [_]u8{0} ** 16,
+    guidItem: [16]u8 = @splat(0),
     hBalloonIcon: HICON = null,
 };
 
@@ -433,7 +433,7 @@ fn winItemLabel(allocator: std.mem.Allocator, action: Item.ActionItem) ![:0]u16 
 fn winShutdownTray() void {
     if (!win_tray_icon_installed.swap(false, .acq_rel)) return;
     if (win_tray_hwnd) |hwnd| {
-        var nid: NOTIFYICONDATAW = .{ .cbSize = @sizeOf(NOTIFYICONDATAW), .hWnd = hwnd, .uID = win_tray_nid, .uFlags = 0, .uCallbackMessage = 0, .hIcon = null, .szTip = [_]WCHAR{0} ** 128 };
+        var nid: NOTIFYICONDATAW = .{ .cbSize = @sizeOf(NOTIFYICONDATAW), .hWnd = hwnd, .uID = win_tray_nid, .uFlags = 0, .uCallbackMessage = 0, .hIcon = null, .szTip = @splat(0) };
         _ = Shell_NotifyIconW(NIM_DELETE, &nid);
         if (win_tray_icon_destroy) {
             if (win_tray_icon_handle) |hi| _ = DestroyIcon(hi);
@@ -525,9 +525,9 @@ fn linuxInstallTrayIcon(allocator: std.mem.Allocator, tooltip: []const u8, icon_
     if (icon_png) |png| if (png.len > @as(usize, @intCast(std.math.maxInt(c_int)))) return error.TrayInstallFailed;
     if (linux_tray_active.swap(true, .acq_rel)) return error.TrayAlreadyInstalled;
     errdefer _ = linux_tray_active.store(false, .release);
-    const tip_z = try allocator.dupeZ(u8, tooltip);
+    const tip_z = try allocator.dupeSentinel(u8, tooltip, 0);
     defer allocator.free(tip_z);
-    const icon_z: ?[:0]u8 = if (icon_name) |n| try allocator.dupeZ(u8, n) else null;
+    const icon_z: ?[:0]u8 = if (icon_name) |n| try allocator.dupeSentinel(u8, n, 0) else null;
     defer if (icon_z) |z| allocator.free(z);
     const png = icon_png orelse "";
     if (ztray_linux_tray_install(
@@ -551,19 +551,19 @@ fn linuxSetTrayMenu(allocator: std.mem.Allocator, menu: TrayMenu) SetTrayMenuErr
 
     var next_id: i32 = 1;
     if (flat.items.len >= linux_max_menu_items) return error.MenuTooLarge;
-    try flat.append(allocator, .{ .id = 0, .parent_id = -1, .action_id = -1, .flags = FLAG_SUBMENU, .shortcut_modifiers = 0, .shortcut_key = 0, .label = (try allocator.dupeZ(u8, "")).ptr });
+    try flat.append(allocator, .{ .id = 0, .parent_id = -1, .action_id = -1, .flags = FLAG_SUBMENU, .shortcut_modifiers = 0, .shortcut_key = 0, .label = (try allocator.dupeSentinel(u8, "", 0)).ptr });
 
     const menu_id = next_id;
     next_id += 1;
     if (flat.items.len >= linux_max_menu_items) return error.MenuTooLarge;
-    try flat.append(allocator, .{ .id = menu_id, .parent_id = 0, .action_id = -1, .flags = FLAG_SUBMENU, .shortcut_modifiers = 0, .shortcut_key = 0, .label = (try allocator.dupeZ(u8, menu.title)).ptr });
+    try flat.append(allocator, .{ .id = menu_id, .parent_id = 0, .action_id = -1, .flags = FLAG_SUBMENU, .shortcut_modifiers = 0, .shortcut_key = 0, .label = (try allocator.dupeSentinel(u8, menu.title, 0)).ptr });
     for (menu.items) |item| {
         switch (item) {
             .separator => {
                 if (flat.items.len >= linux_max_menu_items) return error.MenuTooLarge;
                 const sid = next_id;
                 next_id += 1;
-                try flat.append(allocator, .{ .id = sid, .parent_id = menu_id, .action_id = -1, .flags = FLAG_SEPARATOR, .shortcut_modifiers = 0, .shortcut_key = 0, .label = (try allocator.dupeZ(u8, "")).ptr });
+                try flat.append(allocator, .{ .id = sid, .parent_id = menu_id, .action_id = -1, .flags = FLAG_SEPARATOR, .shortcut_modifiers = 0, .shortcut_key = 0, .label = (try allocator.dupeSentinel(u8, "", 0)).ptr });
             },
             .action => |a| {
                 if (a.action_id < 0) return error.ActionIdOutOfRange;
@@ -572,7 +572,7 @@ fn linuxSetTrayMenu(allocator: std.mem.Allocator, menu: TrayMenu) SetTrayMenuErr
                 next_id += 1;
                 var fl: u32 = 0;
                 if (!a.enabled) fl |= FLAG_DISABLED;
-                try flat.append(allocator, .{ .id = aid, .parent_id = menu_id, .action_id = a.action_id, .flags = fl, .shortcut_modifiers = if (a.shortcut) |shortcut| linuxShortcutModifiers(shortcut) else 0, .shortcut_key = if (a.shortcut) |shortcut| shortcut.key.keyEquivalentByte() else 0, .label = (try allocator.dupeZ(u8, a.title)).ptr });
+                try flat.append(allocator, .{ .id = aid, .parent_id = menu_id, .action_id = a.action_id, .flags = fl, .shortcut_modifiers = if (a.shortcut) |shortcut| linuxShortcutModifiers(shortcut) else 0, .shortcut_key = if (a.shortcut) |shortcut| shortcut.key.keyEquivalentByte() else 0, .label = (try allocator.dupeSentinel(u8, a.title, 0)).ptr });
             },
         }
     }

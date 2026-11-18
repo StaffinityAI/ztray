@@ -4,6 +4,7 @@
  */
 #include <dbus/dbus.h>
 #include <stdatomic.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -649,8 +650,7 @@ int ztray_linux_dbus_init(void) {
     char bus_name[64];
     snprintf(bus_name, sizeof(bus_name), "org.ztray.app%d", (int)getpid());
     dbus_uint32_t flags = DBUS_NAME_FLAG_DO_NOT_QUEUE;
-    dbus_uint32_t reply = 0;
-    (void)dbus_bus_request_name(g_conn, bus_name, flags, &reply);
+    (void)dbus_bus_request_name(g_conn, bus_name, flags, NULL);
     return 1;
 }
 

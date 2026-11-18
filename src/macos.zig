@@ -48,7 +48,7 @@ fn addItemsToTarget(
                 if (!addSep()) return error.MenuInstallFailed;
             },
             .action => |action| {
-                const item_title = try allocator.dupeZ(u8, action.title);
+                const item_title = try allocator.dupeSentinel(u8, action.title, 0);
                 defer allocator.free(item_title);
 
                 var key_buf: [2]u8 = undefined;
@@ -73,7 +73,7 @@ pub fn installMainMenu(allocator: std.mem.Allocator, menu_bar: types.MenuBar) er
     if (!ZTrayMacOSBeginMainMenu()) return error.MenuInstallFailed;
 
     for (menu_bar.menus) |menu| {
-        const title = try allocator.dupeZ(u8, menu.title);
+        const title = try allocator.dupeSentinel(u8, menu.title, 0);
         defer allocator.free(title);
         if (!ZTrayMacOSBeginMenu(title.ptr)) return error.MenuInstallFailed;
         try addItemsToTarget(allocator, menu.items, ZTrayMacOSAddItem, ZTrayMacOSAddSeparator);
@@ -91,10 +91,10 @@ pub fn installTrayIcon(allocator: std.mem.Allocator, tooltip: []const u8, icon_f
     if (macos_tray_active.swap(true, .acq_rel)) return error.TrayAlreadyInstalled;
     errdefer _ = macos_tray_active.store(false, .release);
 
-    const tip_z = try allocator.dupeZ(u8, tooltip);
+    const tip_z = try allocator.dupeSentinel(u8, tooltip, 0);
     defer allocator.free(tip_z);
 
-    const icon_z: ?[:0]u8 = if (icon_file_utf8) |p| try allocator.dupeZ(u8, p) else null;
+    const icon_z: ?[:0]u8 = if (icon_file_utf8) |p| try allocator.dupeSentinel(u8, p, 0) else null;
     defer if (icon_z) |z| allocator.free(z);
 
     const png = icon_png orelse "";

@@ -4,6 +4,9 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   build-and-test:
     name: ${{ matrix.os }}
@@ -13,8 +16,8 @@ jobs:
       matrix:
         os: [macos-latest, ubuntu-latest, windows-latest]
     steps:
-      - uses: actions/checkout@v4
-      - uses: mlugg/setup-zig@v2
+      - uses: actions/checkout@v7
+      - uses: EuroZig/setup-zig@v3
         with:
           version: 0.17.0
       - name: Install Linux D-Bus development files

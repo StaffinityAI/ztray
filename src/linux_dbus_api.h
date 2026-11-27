@@ -111,6 +111,8 @@ typedef void (*DBusPendingCallNotifyFunction)(DBusPendingCall *pending, void *us
     X(dbus_bool_t, message_iter_append_fixed_array, (DBusMessageIter *iter, int element_type, const void *value, int n_elements)) \
     X(dbus_bool_t, message_iter_close_container, (DBusMessageIter *iter, DBusMessageIter *sub)) \
     X(void, message_iter_get_basic, (DBusMessageIter *iter, void *value)) \
+    X(int, message_iter_get_arg_type, (DBusMessageIter *iter)) \
+    X(void, message_iter_recurse, (DBusMessageIter *iter, DBusMessageIter *sub)) \
     X(dbus_bool_t, message_iter_init, (DBusMessage *message, DBusMessageIter *iter)) \
     X(void, message_iter_init_append, (DBusMessage *message, DBusMessageIter *iter)) \
     X(dbus_bool_t, message_iter_next, (DBusMessageIter *iter)) \
@@ -157,6 +159,8 @@ int ztray_dbus_load(void);
 #define dbus_message_iter_append_fixed_array (ztray_dbus.message_iter_append_fixed_array)
 #define dbus_message_iter_close_container (ztray_dbus.message_iter_close_container)
 #define dbus_message_iter_get_basic (ztray_dbus.message_iter_get_basic)
+#define dbus_message_iter_get_arg_type (ztray_dbus.message_iter_get_arg_type)
+#define dbus_message_iter_recurse (ztray_dbus.message_iter_recurse)
 #define dbus_message_iter_init (ztray_dbus.message_iter_init)
 #define dbus_message_iter_init_append (ztray_dbus.message_iter_init_append)
 #define dbus_message_iter_next (ztray_dbus.message_iter_next)

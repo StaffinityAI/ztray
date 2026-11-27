@@ -604,10 +604,10 @@ fn linuxSetTrayMenu(allocator: std.mem.Allocator, menu: TrayMenu) SetTrayMenuErr
     if (flat.items.len >= linux_max_menu_items) return error.MenuTooLarge;
     try flat.append(allocator, .{ .id = 0, .parent_id = -1, .action_id = -1, .flags = FLAG_SUBMENU, .shortcut_modifiers = 0, .shortcut_key = 0, .label = (try allocator.dupeSentinel(u8, "", 0)).ptr });
 
-    const menu_id = next_id;
-    next_id += 1;
-    if (flat.items.len >= linux_max_menu_items) return error.MenuTooLarge;
-    try flat.append(allocator, .{ .id = menu_id, .parent_id = 0, .action_id = -1, .flags = FLAG_SUBMENU, .shortcut_modifiers = 0, .shortcut_key = 0, .label = (try allocator.dupeSentinel(u8, menu.title, 0)).ptr });
+    // A tray menu opens directly with its items, as on macOS and Windows;
+    // a submenu named after menu.title would add a level hosts show as one
+    // lone entry.
+    const menu_id = 0;
     for (menu.items) |item| {
         switch (item) {
             .separator => {

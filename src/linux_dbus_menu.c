@@ -206,6 +206,11 @@ static DBusHandlerResult reply_introspect_menu(DBusMessage *msg) {
         "   <arg name=\"revision\" type=\"u\" direction=\"out\"/>\n"
         "   <arg name=\"layout\" type=\"(ia{sv}av)\" direction=\"out\"/>\n"
         "  </method>\n"
+        "  <method name=\"GetGroupProperties\">\n"
+        "   <arg name=\"ids\" type=\"ai\" direction=\"in\"/>\n"
+        "   <arg name=\"propertyNames\" type=\"as\" direction=\"in\"/>\n"
+        "   <arg name=\"properties\" type=\"a(ia{sv})\" direction=\"out\"/>\n"
+        "  </method>\n"
         "  <method name=\"Event\">\n"
         "   <arg name=\"id\" type=\"i\" direction=\"in\"/>\n"
         "   <arg name=\"eventId\" type=\"s\" direction=\"in\"/>\n"
@@ -324,8 +329,10 @@ static int append_sni_property(DBusMessageIter *iter, const char *prop) {
     if (strcmp(prop, "Id") == 0) return append_variant_string(iter, "ztray") ? 1 : -1;
     if (strcmp(prop, "Title") == 0) return append_variant_string(iter, g_tray_tooltip ? g_tray_tooltip : "ztray") ? 1 : -1;
     if (strcmp(prop, "Status") == 0) return append_variant_string(iter, g_tray_sni_active ? "Active" : "Passive") ? 1 : -1;
+    /* Hosts prefer a non-empty IconName over IconPixmap, so the fallback
+     * name applies only when there is no pixmap either. */
     if (strcmp(prop, "IconName") == 0)
-        return append_variant_string(iter, g_tray_icon_name ? g_tray_icon_name : "application-x-executable") ? 1 : -1;
+        return append_variant_string(iter, g_tray_icon_name ? g_tray_icon_name : g_tray_icon_argb ? "" : "application-x-executable") ? 1 : -1;
     if (strcmp(prop, "IconPixmap") == 0) {
         if (!dbus_message_iter_open_container(iter, DBUS_TYPE_VARIANT, "a(iiay)", &variant)) return -1;
         if (!append_tray_icon_pixmap(&variant)) return -1;
@@ -464,6 +471,59 @@ static DBusHandlerResult handle_properties_get_v2(const char *path, DBusMessage 
     return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
 }
 
+static int append_root_properties(DBusMessageIter *dict) {
+    if (!append_dict_string(dict, "type", "standard")) return 0;
+    if (!append_dict_string(dict, "label", "")) return 0;
+    if (!append_dict_bool(dict, "enabled", TRUE)) return 0;
+    return append_dict_string(dict, "children-display", "submenu");
+}
+
+static int append_group_entry(DBusMessageIter *array, int32_t id, ZTrayItem *node) {
+    DBusMessageIter entry, dict;
+    if (!dbus_message_iter_open_container(array, DBUS_TYPE_STRUCT, NULL, &entry)) return 0;
+    if (!dbus_message_iter_append_basic(&entry, DBUS_TYPE_INT32, &id)) return 0;
+    if (!dbus_message_iter_open_container(&entry, DBUS_TYPE_ARRAY, "{sv}", &dict)) return 0;
+    if (!(node ? append_properties(&dict, node) : append_root_properties(&dict))) return 0;
+    if (!dbus_message_iter_close_container(&entry, &dict)) return 0;
+    return dbus_message_iter_close_container(array, &entry);
+}
+
+/* GetGroupProperties(ai ids, as names) -> a(ia{sv}): the properties of the
+ * requested items, or of every item when ids is empty. Unknown ids are left
+ * out; property names are not filtered. */
+static DBusHandlerResult handle_get_group_properties(const char *path, DBusMessage *msg) {
+    ZTrayItem *items = strcmp(path, ZTRAY_MENU_PATH) == 0 ? g_menubar_items : g_tray_items;
+    int n = strcmp(path, ZTRAY_MENU_PATH) == 0 ? g_n_menubar : g_n_tray;
+    if (!dbus_message_has_signature(msg, "aias")) return reply_invalid_args(msg);
+    DBusMessageIter args, ids;
+    if (!dbus_message_iter_init(msg, &args)) return reply_invalid_args(msg);
+    dbus_message_iter_recurse(&args, &ids);
+
+    DBusMessage *reply = dbus_message_new_method_return(msg);
+    if (!reply) return DBUS_HANDLER_RESULT_HANDLED;
+    DBusMessageIter iter, array;
+    dbus_message_iter_init_append(reply, &iter);
+    int ok = dbus_message_iter_open_container(&iter, DBUS_TYPE_ARRAY, "(ia{sv})", &array);
+    if (ok && dbus_message_iter_get_arg_type(&ids) == DBUS_TYPE_INVALID) {
+        ok = append_group_entry(&array, 0, NULL);
+        for (int i = 0; ok && i < n; i++) ok = append_group_entry(&array, items[i].id, &items[i]);
+    }
+    while (ok && dbus_message_iter_get_arg_type(&ids) == DBUS_TYPE_INT32) {
+        int32_t id = 0;
+        dbus_message_iter_get_basic(&ids, &id);
+        ZTrayItem *node = find_in(items, n, id);
+        if (node || id == 0) ok = append_group_entry(&array, id, node);
+        dbus_message_iter_next(&ids);
+    }
+    if (!ok || !dbus_message_iter_close_container(&iter, &array)) {
+        dbus_message_unref(reply);
+        return DBUS_HANDLER_RESULT_NEED_MEMORY;
+    }
+    dbus_connection_send(g_conn, reply, NULL);
+    dbus_message_unref(reply);
+    return DBUS_HANDLER_RESULT_HANDLED;
+}
+
 static DBusHandlerResult handle_get_layout(const char *path, DBusMessage *msg) {
     ZTrayItem *items;
     int n;
@@ -494,13 +554,15 @@ static DBusHandlerResult handle_get_layout(const char *path, DBusMessage *msg) {
     DBusMessage *reply = dbus_message_new_method_return(msg);
     if (!reply) return DBUS_HANDLER_RESULT_HANDLED;
 
-    DBusMessageIter iter, outer, layout_struct, dict, av;
+    /* The reply is two values, "u(ia{sv}av)": the revision and the layout.
+     * Wrapping them in one struct gives "(u(ia{sv}av))", which GDBus clients
+     * such as GNOME's AppIndicator extension reject. */
+    DBusMessageIter iter, layout_struct, dict, av;
     dbus_message_iter_init_append(reply, &iter);
-    if (!dbus_message_iter_open_container(&iter, DBUS_TYPE_STRUCT, NULL, &outer)) goto fail;
     dbus_uint32_t rev_copy = *revision;
-    if (!dbus_message_iter_append_basic(&outer, DBUS_TYPE_UINT32, &rev_copy)) goto fail;
+    if (!dbus_message_iter_append_basic(&iter, DBUS_TYPE_UINT32, &rev_copy)) goto fail;
 
-    if (!dbus_message_iter_open_container(&outer, DBUS_TYPE_STRUCT, NULL, &layout_struct)) goto fail;
+    if (!dbus_message_iter_open_container(&iter, DBUS_TYPE_STRUCT, NULL, &layout_struct)) goto fail;
     if (!dbus_message_iter_append_basic(&layout_struct, DBUS_TYPE_INT32, &nid)) goto fail;
 
     if (!dbus_message_iter_open_container(&layout_struct, DBUS_TYPE_ARRAY, "{sv}", &dict)) goto fail;
@@ -521,8 +583,7 @@ static DBusHandlerResult handle_get_layout(const char *path, DBusMessage *msg) {
         if (!append_layout_recursive(&av, items, n, parent_id, depth)) goto fail;
     }
     if (!dbus_message_iter_close_container(&layout_struct, &av)) goto fail;
-    if (!dbus_message_iter_close_container(&outer, &layout_struct)) goto fail;
-    if (!dbus_message_iter_close_container(&iter, &outer)) goto fail;
+    if (!dbus_message_iter_close_container(&iter, &layout_struct)) goto fail;
 
     dbus_connection_send(g_conn, reply, NULL);
     dbus_message_unref(reply);
@@ -635,6 +696,7 @@ static DBusHandlerResult filter_message(DBusConnection *connection, DBusMessage 
             return handle_properties_get_all(path, message);
         if (strcmp(iface, "com.canonical.dbusmenu") == 0) {
             if (strcmp(member, "GetLayout") == 0) return handle_get_layout(path, message);
+            if (strcmp(member, "GetGroupProperties") == 0) return handle_get_group_properties(path, message);
             if (strcmp(member, "Event") == 0) return handle_event(path, message);
             if (strcmp(member, "AboutToShow") == 0) return handle_about_to_show(message);
             if (strcmp(member, "EventGroup") == 0) return handle_event_group(message);

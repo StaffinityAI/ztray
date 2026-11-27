@@ -10,6 +10,7 @@ All notable changes are documented here.
 
 ### Fixed
 
+- Linux tray icons with a PNG no longer abort the process when a host reads `IconPixmap`: the pixel bytes are now appended inside their own `ay` container, as libdbus requires.
 - Linux StatusNotifierItem answers `org.freedesktop.DBus.Properties.GetAll` (and exposes `ItemIsMenu`). GNOME's AppIndicator extension reads items only through `GetAll` and unregistered the icon right after registration, so no tray icon appeared on GNOME.
 
 ### Changed

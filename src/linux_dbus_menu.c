@@ -287,7 +287,7 @@ static DBusHandlerResult reply_properties_dbusmenu_version(DBusMessage *msg) {
 }
 
 static int append_tray_icon_pixmap(DBusMessageIter *iter) {
-    DBusMessageIter array, entry;
+    DBusMessageIter array, entry, bytes;
     if (!dbus_message_iter_open_container(iter, DBUS_TYPE_ARRAY, "(iiay)", &array)) return 0;
     if (g_tray_icon_argb == NULL) return dbus_message_iter_close_container(iter, &array);
     if (!dbus_message_iter_open_container(&array, DBUS_TYPE_STRUCT, NULL, &entry)) return 0;
@@ -295,8 +295,12 @@ static int append_tray_icon_pixmap(DBusMessageIter *iter) {
     dbus_int32_t height = g_tray_icon_height;
     if (!dbus_message_iter_append_basic(&entry, DBUS_TYPE_INT32, &width)) return 0;
     if (!dbus_message_iter_append_basic(&entry, DBUS_TYPE_INT32, &height)) return 0;
-    if (!dbus_message_iter_append_fixed_array(&entry, DBUS_TYPE_BYTE, &g_tray_icon_argb,
+    /* The pixels are the struct's "ay" member: a fixed array needs its own
+     * array container; libdbus aborts when it is appended to the struct. */
+    if (!dbus_message_iter_open_container(&entry, DBUS_TYPE_ARRAY, "y", &bytes)) return 0;
+    if (!dbus_message_iter_append_fixed_array(&bytes, DBUS_TYPE_BYTE, &g_tray_icon_argb,
                                               g_tray_icon_width * g_tray_icon_height * 4)) return 0;
+    if (!dbus_message_iter_close_container(&entry, &bytes)) return 0;
     if (!dbus_message_iter_close_container(&array, &entry)) return 0;
     if (!dbus_message_iter_close_container(iter, &array)) return 0;
     return 1;

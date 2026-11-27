@@ -387,9 +387,24 @@ pub fn build(b: *std.Build) void {
     const linux_tests = b.addTest(.{ .name = "zmenu-linux-tests", .root_module = linux_test_mod });
     const run_linux_tests = b.addRunArtifact(linux_tests);
 
+    const zmenu_test_stub_mod = b.createModule(.{
+        .root_source_file = b.path("src/zmenu.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const ztray_test_mod = b.createModule(.{
+        .root_source_file = b.path("src/ztray.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    ztray_test_mod.addImport("zmenu", zmenu_test_stub_mod);
+    const ztray_tests = b.addTest(.{ .name = "ztray-tests", .root_module = ztray_test_mod });
+    const run_ztray_tests = b.addRunArtifact(ztray_tests);
+
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_types_tests.step);
     test_step.dependOn(&run_linux_tests.step);
+    test_step.dependOn(&run_ztray_tests.step);
 
     const check = b.step("check", "Compile and link the native tray without launching it");
     const smoke = addTrayMinimalExe(b, ztray_mod, target, optimize, "ztray-native-check");

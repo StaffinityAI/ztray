@@ -199,13 +199,16 @@ const WCHAR = u16;
 const MF_STRING: UINT = 0x0000;
 const MF_SEPARATOR: UINT = 0x0800;
 const MF_GRAYED: UINT = 0x0001;
+const WM_NULL: UINT = 0x0000;
 const WM_COMMAND: UINT = 0x0111;
 const WM_USER: UINT = 0x0400;
+const NIN_SELECT: UINT = WM_USER;
+const WM_LBUTTONUP: UINT = 0x0202;
 const WM_RBUTTONUP: UINT = 0x0205;
 const WM_CONTEXTMENU: UINT = 0x007B;
 const WM_APP: UINT = 0x8000;
 const WS_POPUP: DWORD = 0x80000000;
-const HWND_MESSAGE: HWND = @ptrFromInt(@as(usize, @bitCast(@as(isize, -3))));
+const WS_EX_TOOLWINDOW: DWORD = 0x00000080;
 
 const NIF_MESSAGE: UINT = 0x00000001;
 const NIF_ICON: UINT = 0x00000002;
@@ -227,6 +230,7 @@ var win_tray_callback_msg: UINT = WM_APP + 80;
 var win_tray_nid: UINT = 1;
 var win_tray_icon_handle: HICON = null;
 var win_tray_icon_destroy: bool = false;
+var win_tray_v4: bool = false;
 
 const IMAGE_ICON: UINT = 1;
 const LR_DEFAULTSIZE: UINT = 0x0040;
@@ -304,6 +308,7 @@ const WinMSG = extern struct { hwnd: HWND, message: UINT, wParam: WPARAM, lParam
 const TPM_RIGHTBUTTON: UINT = 0x0002;
 const TPM_BOTTOMALIGN: UINT = 0x0020;
 const TPM_NONOTIFY: UINT = 0x0080;
+const TPM_RETURNCMD: UINT = 0x0100;
 const PM_REMOVE: UINT = 0x0001;
 
 const tray_window_class = std.unicode.utf8ToUtf16LeStringLiteral("ZTrayMsgOnlyTray");
@@ -321,7 +326,7 @@ fn winCreateMessageWindow() !HWND {
     const hinst = GetModuleHandleW(null) orelse return error.TrayInstallFailed;
     try winRegisterTrayClass(hinst);
     const title = std.unicode.utf8ToUtf16LeStringLiteral("");
-    return CreateWindowExW(0, tray_window_class[0.. :0].ptr, title[0.. :0].ptr, WS_POPUP, 0, 0, 0, 0, HWND_MESSAGE, null, hinst, null) orelse return error.TrayInstallFailed;
+    return CreateWindowExW(WS_EX_TOOLWINDOW, tray_window_class[0.. :0].ptr, title[0.. :0].ptr, WS_POPUP, 0, 0, 0, 0, null, null, hinst, null) orelse return error.TrayInstallFailed;
 }
 
 fn winFillTip(out: *[128]WCHAR, tooltip: []const u8) void {
@@ -389,7 +394,7 @@ fn winInstallTrayIcon(allocator: std.mem.Allocator, host_hwnd: HWND, tooltip: []
     win_tray_icon_handle = loaded.icon;
     win_tray_icon_destroy = loaded.destroy;
     nid.uVersion = NOTIFYICON_VERSION_4;
-    _ = Shell_NotifyIconW(NIM_SETVERSION, &nid);
+    win_tray_v4 = Shell_NotifyIconW(NIM_SETVERSION, &nid) != 0;
 }
 
 fn winSetTrayMenu(allocator: std.mem.Allocator, menu: TrayMenu) SetTrayMenuError!void {
@@ -449,6 +454,7 @@ fn winShutdownTray() void {
         win_tray_hwnd = null;
         win_tray_hwnd_owned = false;
     }
+    win_tray_v4 = false;
     _ = win_tray_pending_action_id.store(-1, .release);
 }
 
@@ -465,18 +471,45 @@ fn winPumpTray() void {
     }
 }
 
+/// Extracts `LOWORD(lParam)` from a Windows tray callback message.
+/// Under `NOTIFYICON_VERSION_4`, Windows packs `(uID << 16) | event` into `lParam`.
+fn winTrayEventFromLParam(lparam: LPARAM) u16 {
+    return @truncate(@as(usize, @bitCast(lparam)));
+}
+
+/// Returns whether a tray callback `lParam` should open the popup menu.
+/// Under `NOTIFYICON_VERSION_4`, Windows sends `WM_RBUTTONUP` immediately before
+/// `WM_CONTEXTMENU`, so v4 mode triggers only on `WM_CONTEXTMENU` and `NIN_SELECT`.
+fn winTrayShouldShowPopup(lparam: LPARAM, v4: bool) bool {
+    const event: UINT = winTrayEventFromLParam(lparam);
+    if (v4) {
+        return event == WM_CONTEXTMENU or event == NIN_SELECT;
+    }
+    return event == WM_RBUTTONUP or event == WM_CONTEXTMENU or event == WM_LBUTTONUP;
+}
+
 fn winTraySubclassProc(hWnd: HWND, uMsg: UINT, wParam: WPARAM, lParam: LPARAM, uIdSubclass: UINT_PTR, dwRefData: DWORD_PTR) callconv(.winapi) LRESULT {
     _ = uIdSubclass;
     _ = dwRefData;
     if (uMsg == win_tray_callback_msg) {
-        const mouse_msg: UINT = @truncate(@as(usize, @bitCast(lParam)));
-        if (mouse_msg == WM_RBUTTONUP or mouse_msg == WM_CONTEXTMENU) {
+        if (winTrayShouldShowPopup(lParam, win_tray_v4)) {
             if (win_tray_popup_menu) |popup| {
                 var pt: WinPOINT = undefined;
                 if (GetCursorPos(&pt) != 0) {
                     _ = SetForegroundWindow(hWnd);
-                    _ = TrackPopupMenu(popup, TPM_RIGHTBUTTON | TPM_BOTTOMALIGN | TPM_NONOTIFY, pt.x, pt.y, 0, hWnd, null);
-                    _ = PostMessageW(hWnd, WM_USER + 99, 0, 0);
+                    const chosen = TrackPopupMenu(
+                        popup,
+                        TPM_RIGHTBUTTON | TPM_BOTTOMALIGN | TPM_NONOTIFY | TPM_RETURNCMD,
+                        pt.x,
+                        pt.y,
+                        0,
+                        hWnd,
+                        null,
+                    );
+                    _ = PostMessageW(hWnd, WM_NULL, 0, 0);
+                    if (chosen >= @as(c_int, tray_command_base) and chosen <= 0xFFFF) {
+                        win_tray_pending_action_id.store(chosen - @as(c_int, tray_command_base), .release);
+                    }
                 }
             }
             return 0;
@@ -591,4 +624,36 @@ fn linuxPollTrayActionId() c_int {
 
 fn linuxPumpDBus() void {
     ztray_linux_dbus_dispatch();
+}
+
+test "winTrayEventFromLParam extracts LOWORD from NOTIFYICON_VERSION_4 lParam" {
+    const uid: usize = 1;
+    const context_menu: LPARAM = @bitCast((uid << 16) | WM_CONTEXTMENU);
+    const rbutton_up: LPARAM = @bitCast((uid << 16) | WM_RBUTTONUP);
+    const nin_select: LPARAM = @bitCast((uid << 16) | NIN_SELECT);
+    const legacy_rbutton_up: LPARAM = @bitCast(@as(usize, WM_RBUTTONUP));
+
+    try std.testing.expectEqual(@as(u16, @intCast(WM_CONTEXTMENU)), winTrayEventFromLParam(context_menu));
+    try std.testing.expectEqual(@as(u16, @intCast(WM_RBUTTONUP)), winTrayEventFromLParam(rbutton_up));
+    try std.testing.expectEqual(@as(u16, @intCast(NIN_SELECT)), winTrayEventFromLParam(nin_select));
+    try std.testing.expectEqual(@as(u16, @intCast(WM_RBUTTONUP)), winTrayEventFromLParam(legacy_rbutton_up));
+}
+
+test "winTrayShouldShowPopup handles NOTIFYICON_VERSION_4 without double-triggering WM_RBUTTONUP" {
+    const uid: usize = 1;
+    const v4_context_menu: LPARAM = @bitCast((uid << 16) | WM_CONTEXTMENU);
+    const v4_rbutton_up: LPARAM = @bitCast((uid << 16) | WM_RBUTTONUP);
+    const v4_lbutton_up: LPARAM = @bitCast((uid << 16) | WM_LBUTTONUP);
+    const v4_nin_select: LPARAM = @bitCast((uid << 16) | NIN_SELECT);
+
+    try std.testing.expect(winTrayShouldShowPopup(v4_context_menu, true));
+    try std.testing.expect(winTrayShouldShowPopup(v4_nin_select, true));
+    try std.testing.expect(!winTrayShouldShowPopup(v4_rbutton_up, true));
+    try std.testing.expect(!winTrayShouldShowPopup(v4_lbutton_up, true));
+
+    // Legacy fallback (when NIM_SETVERSION failed)
+    try std.testing.expect(winTrayShouldShowPopup(@bitCast(@as(usize, WM_RBUTTONUP)), false));
+    try std.testing.expect(winTrayShouldShowPopup(@bitCast(@as(usize, WM_CONTEXTMENU)), false));
+    try std.testing.expect(winTrayShouldShowPopup(@bitCast(@as(usize, WM_LBUTTONUP)), false));
+    try std.testing.expect(!winTrayShouldShowPopup(@bitCast(@as(usize, NIN_SELECT)), false));
 }

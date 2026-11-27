@@ -255,6 +255,7 @@ static DBusHandlerResult reply_introspect_sni(DBusMessage *msg) {
         "  <property name=\"Status\" type=\"s\" access=\"read\"/>\n"
         "  <property name=\"IconName\" type=\"s\" access=\"read\"/>\n"
         "  <property name=\"IconPixmap\" type=\"a(iiay)\" access=\"read\"/>\n"
+        "  <property name=\"ItemIsMenu\" type=\"b\" access=\"read\"/>\n"
         "  <signal name=\"NewIcon\"/>\n"
         "  <property name=\"Menu\" type=\"o\" access=\"read\"/>\n"
         " </interface>\n"
@@ -301,58 +302,123 @@ static int append_tray_icon_pixmap(DBusMessageIter *iter) {
     return 1;
 }
 
+/* StatusNotifierItem properties, as answered by Get and GetAll. */
+static const char *const g_sni_properties[] = {"Category", "Id", "Title", "Status", "IconName", "IconPixmap", "ItemIsMenu", "Menu"};
+
+static int append_variant_string(DBusMessageIter *iter, const char *value) {
+    DBusMessageIter variant;
+    if (!dbus_message_iter_open_container(iter, DBUS_TYPE_VARIANT, "s", &variant)) return 0;
+    if (!dbus_message_iter_append_basic(&variant, DBUS_TYPE_STRING, &value)) return 0;
+    return dbus_message_iter_close_container(iter, &variant);
+}
+
+/* Appends the variant value of `prop` to `iter`: 1 when appended, 0 when the
+ * property is unknown, -1 when the message could not be built. */
+static int append_sni_property(DBusMessageIter *iter, const char *prop) {
+    DBusMessageIter variant;
+    if (strcmp(prop, "Category") == 0) return append_variant_string(iter, "ApplicationStatus") ? 1 : -1;
+    if (strcmp(prop, "Id") == 0) return append_variant_string(iter, "ztray") ? 1 : -1;
+    if (strcmp(prop, "Title") == 0) return append_variant_string(iter, g_tray_tooltip ? g_tray_tooltip : "ztray") ? 1 : -1;
+    if (strcmp(prop, "Status") == 0) return append_variant_string(iter, g_tray_sni_active ? "Active" : "Passive") ? 1 : -1;
+    if (strcmp(prop, "IconName") == 0)
+        return append_variant_string(iter, g_tray_icon_name ? g_tray_icon_name : "application-x-executable") ? 1 : -1;
+    if (strcmp(prop, "IconPixmap") == 0) {
+        if (!dbus_message_iter_open_container(iter, DBUS_TYPE_VARIANT, "a(iiay)", &variant)) return -1;
+        if (!append_tray_icon_pixmap(&variant)) return -1;
+        return dbus_message_iter_close_container(iter, &variant) ? 1 : -1;
+    }
+    if (strcmp(prop, "ItemIsMenu") == 0) {
+        dbus_bool_t value = FALSE;
+        if (!dbus_message_iter_open_container(iter, DBUS_TYPE_VARIANT, "b", &variant)) return -1;
+        if (!dbus_message_iter_append_basic(&variant, DBUS_TYPE_BOOLEAN, &value)) return -1;
+        return dbus_message_iter_close_container(iter, &variant) ? 1 : -1;
+    }
+    if (strcmp(prop, "Menu") == 0) {
+        const char *menu_obj_path = ZTRAY_TRAY_MENU_PATH;
+        if (!dbus_message_iter_open_container(iter, DBUS_TYPE_VARIANT, "o", &variant)) return -1;
+        if (!dbus_message_iter_append_basic(&variant, DBUS_TYPE_OBJECT_PATH, &menu_obj_path)) return -1;
+        return dbus_message_iter_close_container(iter, &variant) ? 1 : -1;
+    }
+    return 0;
+}
+
 static DBusHandlerResult reply_sni_property(DBusMessage *msg, const char *prop) {
     DBusMessage *reply = dbus_message_new_method_return(msg);
     if (!reply) return DBUS_HANDLER_RESULT_HANDLED;
-    DBusMessageIter iter, variant;
-
+    DBusMessageIter iter;
     dbus_message_iter_init_append(reply, &iter);
-
-    if (strcmp(prop, "Category") == 0) {
-        const char *v = "ApplicationStatus";
-        dbus_message_iter_open_container(&iter, DBUS_TYPE_VARIANT, "s", &variant);
-        dbus_message_iter_append_basic(&variant, DBUS_TYPE_STRING, &v);
-        dbus_message_iter_close_container(&iter, &variant);
-    } else if (strcmp(prop, "Id") == 0) {
-        const char *v = "ztray";
-        dbus_message_iter_open_container(&iter, DBUS_TYPE_VARIANT, "s", &variant);
-        dbus_message_iter_append_basic(&variant, DBUS_TYPE_STRING, &v);
-        dbus_message_iter_close_container(&iter, &variant);
-    } else if (strcmp(prop, "Title") == 0) {
-        const char *v = g_tray_tooltip ? g_tray_tooltip : "ztray";
-        dbus_message_iter_open_container(&iter, DBUS_TYPE_VARIANT, "s", &variant);
-        dbus_message_iter_append_basic(&variant, DBUS_TYPE_STRING, &v);
-        dbus_message_iter_close_container(&iter, &variant);
-    } else if (strcmp(prop, "Status") == 0) {
-        const char *v = g_tray_sni_active ? "Active" : "Passive";
-        dbus_message_iter_open_container(&iter, DBUS_TYPE_VARIANT, "s", &variant);
-        dbus_message_iter_append_basic(&variant, DBUS_TYPE_STRING, &v);
-        dbus_message_iter_close_container(&iter, &variant);
-    } else if (strcmp(prop, "IconName") == 0) {
-        const char *v = g_tray_icon_name ? g_tray_icon_name : "application-x-executable";
-        dbus_message_iter_open_container(&iter, DBUS_TYPE_VARIANT, "s", &variant);
-        dbus_message_iter_append_basic(&variant, DBUS_TYPE_STRING, &v);
-        dbus_message_iter_close_container(&iter, &variant);
-    } else if (strcmp(prop, "IconPixmap") == 0) {
-        dbus_message_iter_open_container(&iter, DBUS_TYPE_VARIANT, "a(iiay)", &variant);
-        if (!append_tray_icon_pixmap(&variant)) {
-            dbus_message_unref(reply);
-            return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
-        }
-        dbus_message_iter_close_container(&iter, &variant);
-    } else if (strcmp(prop, "Menu") == 0) {
-        const char *menu_obj_path = ZTRAY_TRAY_MENU_PATH;
-        dbus_message_iter_open_container(&iter, DBUS_TYPE_VARIANT, "o", &variant);
-        dbus_message_iter_append_basic(&variant, DBUS_TYPE_OBJECT_PATH, &menu_obj_path);
-        dbus_message_iter_close_container(&iter, &variant);
-    } else {
+    if (append_sni_property(&iter, prop) != 1) {
         dbus_message_unref(reply);
         return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
     }
-
     dbus_connection_send(g_conn, reply, NULL);
     dbus_message_unref(reply);
     return DBUS_HANDLER_RESULT_HANDLED;
+}
+
+/* Properties.GetAll: GNOME's AppIndicator extension reads the item only this
+ * way and unregisters items that do not answer it. */
+static DBusHandlerResult reply_sni_all_properties(DBusMessage *msg) {
+    DBusMessage *reply = dbus_message_new_method_return(msg);
+    if (!reply) return DBUS_HANDLER_RESULT_HANDLED;
+    DBusMessageIter iter, dict, entry;
+    dbus_message_iter_init_append(reply, &iter);
+    int ok = dbus_message_iter_open_container(&iter, DBUS_TYPE_ARRAY, "{sv}", &dict);
+    for (size_t i = 0; ok && i < sizeof g_sni_properties / sizeof g_sni_properties[0]; i++) {
+        const char *name = g_sni_properties[i];
+        ok = dbus_message_iter_open_container(&dict, DBUS_TYPE_DICT_ENTRY, NULL, &entry) &&
+             dbus_message_iter_append_basic(&entry, DBUS_TYPE_STRING, &name) &&
+             append_sni_property(&entry, name) == 1 &&
+             dbus_message_iter_close_container(&dict, &entry);
+    }
+    if (!ok || !dbus_message_iter_close_container(&iter, &dict)) {
+        dbus_message_unref(reply);
+        return DBUS_HANDLER_RESULT_NEED_MEMORY;
+    }
+    dbus_connection_send(g_conn, reply, NULL);
+    dbus_message_unref(reply);
+    return DBUS_HANDLER_RESULT_HANDLED;
+}
+
+/* Properties.GetAll on a dbusmenu object: its only property is Version. */
+static DBusHandlerResult reply_dbusmenu_all_properties(DBusMessage *msg) {
+    DBusMessage *reply = dbus_message_new_method_return(msg);
+    if (!reply) return DBUS_HANDLER_RESULT_HANDLED;
+    DBusMessageIter iter, dict, entry, variant;
+    const char *name = "Version";
+    dbus_uint32_t version = 4;
+    dbus_message_iter_init_append(reply, &iter);
+    int ok = dbus_message_iter_open_container(&iter, DBUS_TYPE_ARRAY, "{sv}", &dict) &&
+             dbus_message_iter_open_container(&dict, DBUS_TYPE_DICT_ENTRY, NULL, &entry) &&
+             dbus_message_iter_append_basic(&entry, DBUS_TYPE_STRING, &name) &&
+             dbus_message_iter_open_container(&entry, DBUS_TYPE_VARIANT, "u", &variant) &&
+             dbus_message_iter_append_basic(&variant, DBUS_TYPE_UINT32, &version) &&
+             dbus_message_iter_close_container(&entry, &variant) &&
+             dbus_message_iter_close_container(&dict, &entry) &&
+             dbus_message_iter_close_container(&iter, &dict);
+    if (!ok) {
+        dbus_message_unref(reply);
+        return DBUS_HANDLER_RESULT_NEED_MEMORY;
+    }
+    dbus_connection_send(g_conn, reply, NULL);
+    dbus_message_unref(reply);
+    return DBUS_HANDLER_RESULT_HANDLED;
+}
+
+static DBusHandlerResult reply_invalid_args(DBusMessage *msg);
+
+static DBusHandlerResult handle_properties_get_all(const char *path, DBusMessage *msg) {
+    if (!dbus_message_has_signature(msg, "s")) return reply_invalid_args(msg);
+    DBusMessageIter args;
+    if (!dbus_message_iter_init(msg, &args)) return reply_invalid_args(msg);
+    const char *iface = NULL;
+    dbus_message_iter_get_basic(&args, &iface);
+    if (strcmp(path, ZTRAY_SNI_PATH) == 0 && strcmp(iface, "org.kde.StatusNotifierItem") == 0)
+        return reply_sni_all_properties(msg);
+    if ((strcmp(path, ZTRAY_MENU_PATH) == 0 || strcmp(path, ZTRAY_TRAY_MENU_PATH) == 0) &&
+        strcmp(iface, "com.canonical.dbusmenu") == 0)
+        return reply_dbusmenu_all_properties(msg);
+    return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
 }
 
 static DBusHandlerResult reply_empty(DBusMessage *msg) {
@@ -561,6 +627,8 @@ static DBusHandlerResult filter_message(DBusConnection *connection, DBusMessage 
             return reply_introspect_menu(message);
         if (strcmp(iface, "org.freedesktop.DBus.Properties") == 0 && strcmp(member, "Get") == 0)
             return handle_properties_get_v2(path, message);
+        if (strcmp(iface, "org.freedesktop.DBus.Properties") == 0 && strcmp(member, "GetAll") == 0)
+            return handle_properties_get_all(path, message);
         if (strcmp(iface, "com.canonical.dbusmenu") == 0) {
             if (strcmp(member, "GetLayout") == 0) return handle_get_layout(path, message);
             if (strcmp(member, "Event") == 0) return handle_event(path, message);
@@ -575,6 +643,8 @@ static DBusHandlerResult filter_message(DBusConnection *connection, DBusMessage 
             return reply_introspect_sni(message);
         if (strcmp(iface, "org.freedesktop.DBus.Properties") == 0 && strcmp(member, "Get") == 0)
             return handle_properties_get_v2(path, message);
+        if (strcmp(iface, "org.freedesktop.DBus.Properties") == 0 && strcmp(member, "GetAll") == 0)
+            return handle_properties_get_all(path, message);
         return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
     }
 

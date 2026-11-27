@@ -35,11 +35,12 @@ pub const ZwindowUnixBackends = enum {
     }
 };
 
-/// Zig adds host system include and library search paths only for native OS/ABI
-/// queries, so an explicitly resolved Linux target cannot find `dbus-1` even on a
-/// matching Linux host.
-fn isNativeLinux(target: std.Build.ResolvedTarget) bool {
-    return target.result.os.tag == .linux and target.query.isNativeOs() and target.query.isNativeAbi();
+/// glibc Linux targets, native or explicitly resolved, use the real D-Bus
+/// backend: it opens libdbus-1.so.3 at runtime (src/linux_dbus_api.c), so the
+/// build needs no D-Bus headers, pkg-config or host library search paths.
+/// Other Linux ABIs keep the failing stub.
+fn hasDynamicDBus(target: std.Build.ResolvedTarget) bool {
+    return target.result.os.tag == .linux and target.result.isGnuLibC();
 }
 
 fn linkNativeMenuBar(mod: *std.Build.Module, b: *std.Build, target: std.Build.ResolvedTarget) void {
@@ -53,10 +54,13 @@ fn linkNativeMenuBar(mod: *std.Build.Module, b: *std.Build, target: std.Build.Re
             mod.linkSystemLibrary("user32", .{});
         },
         .linux => {
-            if (isNativeLinux(target)) {
+            if (hasDynamicDBus(target)) {
+                mod.addCSourceFile(.{ .file = b.path("src/linux_dbus_api.c") });
                 mod.addCSourceFile(.{ .file = b.path("src/linux_dbus_menu.c") });
                 mod.addCSourceFile(.{ .file = b.path("src/linux_tray_png.c") });
-                mod.linkSystemLibrary("dbus-1", .{});
+                // glibc 2.34 moved dlopen into libc; older targets need libdl.
+                if (target.result.os.versionRange().gnuLibCVersion().?.order(.{ .major = 2, .minor = 34, .patch = 0 }) == .lt)
+                    mod.linkSystemLibrary("dl", .{});
             } else {
                 mod.addCSourceFile(.{ .file = b.path("src/linux_dbus_stub.c") });
             }
@@ -286,7 +290,7 @@ fn addTrayMinimalExe(
 }
 
 fn linkLinuxDynamic(exe: *std.Build.Step.Compile, target: std.Build.ResolvedTarget) void {
-    if (isNativeLinux(target)) exe.linkage = .dynamic;
+    if (hasDynamicDBus(target)) exe.linkage = .dynamic;
 }
 
 pub fn build(b: *std.Build) void {

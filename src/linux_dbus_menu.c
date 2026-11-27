@@ -1,8 +1,8 @@
 /*
  * Session D-Bus: com.canonical.dbusmenu for menubar + tray, and org.kde.StatusNotifierItem for Linux tray.
- * Built only when the Zig build host is Linux (<dbus/dbus.h> and -ldbus-1).
+ * libdbus-1 is loaded at runtime (linux_dbus_api.h), so any glibc Linux target builds it.
  */
-#include <dbus/dbus.h>
+#include "linux_dbus_api.h"
 #include <stdatomic.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -48,6 +48,8 @@ static int g_tray_icon_height;
 static int g_tray_sni_active;
 static atomic_int g_appmenu_registrar_has_owner = -1;
 static int g_appmenu_registrar_query_in_flight;
+static atomic_int g_tray_host_has_owner = -1;
+static int g_tray_host_query_in_flight;
 
 enum { FLAG_SEPARATOR = 1u, FLAG_SUBMENU = 2u, FLAG_DISABLED = 4u };
 
@@ -632,6 +634,69 @@ static void query_appmenu_registrar_owner(void) {
 }
 
 /* 1 = com.canonical.AppMenu.Registrar has an owner, 0 = no owner, -1 = query pending or unavailable */
+static void tray_host_query_notify(DBusPendingCall *pending, void *user_data) {
+    (void)user_data;
+    DBusMessage *reply = dbus_pending_call_steal_reply(pending);
+    dbus_pending_call_unref(pending);
+    g_tray_host_query_in_flight = 0;
+    atomic_store(&g_tray_host_has_owner, -1);
+
+    if (!reply) return;
+    if (dbus_message_get_type(reply) == DBUS_MESSAGE_TYPE_METHOD_RETURN && dbus_message_has_signature(reply, "b")) {
+        DBusMessageIter args;
+        if (dbus_message_iter_init(reply, &args)) {
+            dbus_bool_t has_owner = FALSE;
+            dbus_message_iter_get_basic(&args, &has_owner);
+            atomic_store(&g_tray_host_has_owner, has_owner ? 1 : 0);
+        }
+    }
+    dbus_message_unref(reply);
+}
+
+/* Asks the bus whether org.kde.StatusNotifierWatcher is owned. Desktops that
+ * show StatusNotifierItems own it (KDE Plasma, Cinnamon, Budgie, waybar's tray,
+ * GNOME with the AppIndicator extension); stock GNOME does not. */
+static void query_tray_host_owner(void) {
+    if (g_tray_host_query_in_flight || atomic_load(&g_tray_host_has_owner) != -1) return;
+    if (!g_conn) return;
+
+    DBusMessage *msg = dbus_message_new_method_call(
+        "org.freedesktop.DBus",
+        "/org/freedesktop/DBus",
+        "org.freedesktop.DBus",
+        "NameHasOwner");
+    if (!msg) return;
+
+    const char *watcher = "org.kde.StatusNotifierWatcher";
+    if (!dbus_message_append_args(msg, DBUS_TYPE_STRING, &watcher, DBUS_TYPE_INVALID)) {
+        dbus_message_unref(msg);
+        return;
+    }
+
+    DBusPendingCall *pending = NULL;
+    if (!dbus_connection_send_with_reply(g_conn, msg, &pending, -1)) {
+        dbus_message_unref(msg);
+        return;
+    }
+    dbus_message_unref(msg);
+    if (!pending) return;
+    if (!dbus_pending_call_set_notify(pending, tray_host_query_notify, NULL, NULL)) {
+        dbus_pending_call_cancel(pending);
+        dbus_pending_call_unref(pending);
+        return;
+    }
+    g_tray_host_query_in_flight = 1;
+    dbus_connection_flush(g_conn);
+}
+
+/* 1 = a StatusNotifierWatcher shows the tray icon, 0 = none on this desktop,
+ * -1 = no tray installed yet or the answer is still pending */
+int ztray_linux_tray_host_state(void) {
+    if (!g_tray_sni_active) return -1;
+    query_tray_host_owner();
+    return atomic_load(&g_tray_host_has_owner);
+}
+
 int ztray_linux_appmenu_registrar_has_owner(void) {
     query_appmenu_registrar_owner();
     return atomic_load(&g_appmenu_registrar_has_owner);
@@ -639,6 +704,7 @@ int ztray_linux_appmenu_registrar_has_owner(void) {
 
 int ztray_linux_dbus_init(void) {
     if (g_conn) return 1;
+    if (!ztray_dbus_load()) return 0;
     DBusError err;
     dbus_error_init(&err);
     g_conn = dbus_bus_get(DBUS_BUS_SESSION, &err);
@@ -662,6 +728,8 @@ void ztray_linux_dbus_shutdown(void) {
     g_conn = NULL;
     g_appmenu_registrar_query_in_flight = 0;
     atomic_store(&g_appmenu_registrar_has_owner, -1);
+    g_tray_host_query_in_flight = 0;
+    atomic_store(&g_tray_host_has_owner, -1);
     free_menubar_items();
     g_menubar_revision = 0;
 }

@@ -3,7 +3,8 @@
 ## Prerequisites
 
 - Zig 0.17.0 (see `.zigversion`)
-- On Linux, `libdbus-1-dev` for the native D-Bus backend and `libx11-dev` for window chrome
+- On Linux, `libx11-dev` for window chrome. The D-Bus backend needs no development
+  files: it loads `libdbus-1.so.3` at runtime.
 
 ## Before opening a pull request
 
@@ -18,8 +19,8 @@ zig build -Dexamples=true
 
 The default build and `check` compile and link the native tray without launching
 it. `ci` cross-compiles and links native menu/tray binaries for Linux and Windows
-on x86_64 and aarch64; its explicit Linux targets use the D-Bus stub, which
-reports menu and tray installation failure. Optional examples enable DVUI and
+on x86_64 and aarch64, with the same runtime-loaded D-Bus backend as native
+builds. Optional examples enable DVUI and
 wio dependencies.
 Cross-building the window examples additionally requires target system libraries;
 use `zig build ci-examples -Dexamples=true -Dcross-examples=true` with an appropriate

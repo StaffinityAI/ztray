@@ -1,4 +1,4 @@
-/* Unavailable D-Bus backend for non-native Linux targets, which have no host libdbus search paths.
+/* Unavailable D-Bus backend for Linux targets without glibc, where libdbus is not loaded at runtime.
  * Install and update calls report failure so callers receive DBusUnavailable or TrayInstallFailed. */
 #include <stdint.h>
 
@@ -23,6 +23,8 @@ int ztray_linux_dbus_set_items(const ZTrayLinuxItem *items, int n) {
 }
 void ztray_linux_dbus_dispatch(void) {}
 int ztray_linux_dbus_take_pending(void) { return -1; }
+
+int ztray_linux_tray_host_state(void) { return -1; }
 
 int ztray_linux_tray_install(const char *tooltip_utf8, const char *icon_name_or_null, const unsigned char *icon_png, int icon_png_len) {
     (void)tooltip_utf8;

@@ -95,6 +95,23 @@ pub fn shutdownTray() void {
     }
 }
 
+/// Whether the desktop shows the installed tray icon. Linux: `false` when no
+/// `org.kde.StatusNotifierWatcher` owns the session bus name, as on stock GNOME;
+/// the icon then exists but nothing displays it. `null` before
+/// `installTrayIcon` succeeds or while the asynchronous query is pending; keep
+/// calling `pumpEvents`. macOS and Windows always display it.
+pub fn trayHostAvailable() ?bool {
+    return switch (builtin.os.tag) {
+        .linux => switch (ztray_linux_tray_host_state()) {
+            0 => false,
+            1 => true,
+            else => null,
+        },
+        .macos, .windows => true,
+        else => null,
+    };
+}
+
 pub fn trayIcon(tooltip: []const u8, icon_png: []const u8, linux_icon_name: []const u8) TrayIconOptions {
     return .{
         .tooltip = tooltip,
@@ -542,6 +559,7 @@ extern fn ztray_linux_tray_shutdown() void;
 extern fn ztray_linux_tray_set_items(items: [*]const LinuxItemC, n: c_int) c_int;
 extern fn ztray_linux_tray_take_pending() c_int;
 extern fn ztray_linux_dbus_dispatch() void;
+extern fn ztray_linux_tray_host_state() c_int;
 
 const FLAG_SEPARATOR: u32 = 1;
 const FLAG_SUBMENU: u32 = 2;
@@ -586,10 +604,10 @@ fn linuxSetTrayMenu(allocator: std.mem.Allocator, menu: TrayMenu) SetTrayMenuErr
     if (flat.items.len >= linux_max_menu_items) return error.MenuTooLarge;
     try flat.append(allocator, .{ .id = 0, .parent_id = -1, .action_id = -1, .flags = FLAG_SUBMENU, .shortcut_modifiers = 0, .shortcut_key = 0, .label = (try allocator.dupeSentinel(u8, "", 0)).ptr });
 
-    const menu_id = next_id;
-    next_id += 1;
-    if (flat.items.len >= linux_max_menu_items) return error.MenuTooLarge;
-    try flat.append(allocator, .{ .id = menu_id, .parent_id = 0, .action_id = -1, .flags = FLAG_SUBMENU, .shortcut_modifiers = 0, .shortcut_key = 0, .label = (try allocator.dupeSentinel(u8, menu.title, 0)).ptr });
+    // A tray menu opens directly with its items, as on macOS and Windows;
+    // a submenu named after menu.title would add a level hosts show as one
+    // lone entry.
+    const menu_id = 0;
     for (menu.items) |item| {
         switch (item) {
             .separator => {

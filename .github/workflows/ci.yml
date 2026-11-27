@@ -20,14 +20,14 @@ jobs:
       - uses: EuroZig/setup-zig@v3
         with:
           version: 0.17.0
-      - name: Install Linux D-Bus development files
+      - name: Install Linux X11 development files
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install --yes libdbus-1-dev libx11-dev
+        run: sudo apt-get update && sudo apt-get install --yes libx11-dev
       - name: Check Zig formatting
         run: zig fmt --check build.zig build.zig.zon src examples
       - name: Check Linux native C sources
         if: runner.os == 'Linux'
-        run: cc -Wall -Wextra -Werror -fsyntax-only $(pkg-config --cflags dbus-1) src/linux_dbus_menu.c src/linux_tray_png.c
+        run: cc -Wall -Wextra -Werror -fsyntax-only src/linux_dbus_api.c src/linux_dbus_menu.c src/linux_tray_png.c src/linux_dbus_stub.c
       - name: Test and link native tray without launching
         run: zig build test check
       - name: Build native examples without launching

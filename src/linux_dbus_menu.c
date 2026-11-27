@@ -1,8 +1,8 @@
 /*
  * Session D-Bus: com.canonical.dbusmenu for menubar + tray, and org.kde.StatusNotifierItem for Linux tray.
- * Built only when the Zig build host is Linux (<dbus/dbus.h> and -ldbus-1).
+ * libdbus-1 is loaded at runtime (linux_dbus_api.h), so any glibc Linux target builds it.
  */
-#include <dbus/dbus.h>
+#include "linux_dbus_api.h"
 #include <stdatomic.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -48,6 +48,8 @@ static int g_tray_icon_height;
 static int g_tray_sni_active;
 static atomic_int g_appmenu_registrar_has_owner = -1;
 static int g_appmenu_registrar_query_in_flight;
+static atomic_int g_tray_host_has_owner = -1;
+static int g_tray_host_query_in_flight;
 
 enum { FLAG_SEPARATOR = 1u, FLAG_SUBMENU = 2u, FLAG_DISABLED = 4u };
 
@@ -204,6 +206,11 @@ static DBusHandlerResult reply_introspect_menu(DBusMessage *msg) {
         "   <arg name=\"revision\" type=\"u\" direction=\"out\"/>\n"
         "   <arg name=\"layout\" type=\"(ia{sv}av)\" direction=\"out\"/>\n"
         "  </method>\n"
+        "  <method name=\"GetGroupProperties\">\n"
+        "   <arg name=\"ids\" type=\"ai\" direction=\"in\"/>\n"
+        "   <arg name=\"propertyNames\" type=\"as\" direction=\"in\"/>\n"
+        "   <arg name=\"properties\" type=\"a(ia{sv})\" direction=\"out\"/>\n"
+        "  </method>\n"
         "  <method name=\"Event\">\n"
         "   <arg name=\"id\" type=\"i\" direction=\"in\"/>\n"
         "   <arg name=\"eventId\" type=\"s\" direction=\"in\"/>\n"
@@ -253,6 +260,7 @@ static DBusHandlerResult reply_introspect_sni(DBusMessage *msg) {
         "  <property name=\"Status\" type=\"s\" access=\"read\"/>\n"
         "  <property name=\"IconName\" type=\"s\" access=\"read\"/>\n"
         "  <property name=\"IconPixmap\" type=\"a(iiay)\" access=\"read\"/>\n"
+        "  <property name=\"ItemIsMenu\" type=\"b\" access=\"read\"/>\n"
         "  <signal name=\"NewIcon\"/>\n"
         "  <property name=\"Menu\" type=\"o\" access=\"read\"/>\n"
         " </interface>\n"
@@ -284,7 +292,7 @@ static DBusHandlerResult reply_properties_dbusmenu_version(DBusMessage *msg) {
 }
 
 static int append_tray_icon_pixmap(DBusMessageIter *iter) {
-    DBusMessageIter array, entry;
+    DBusMessageIter array, entry, bytes;
     if (!dbus_message_iter_open_container(iter, DBUS_TYPE_ARRAY, "(iiay)", &array)) return 0;
     if (g_tray_icon_argb == NULL) return dbus_message_iter_close_container(iter, &array);
     if (!dbus_message_iter_open_container(&array, DBUS_TYPE_STRUCT, NULL, &entry)) return 0;
@@ -292,65 +300,136 @@ static int append_tray_icon_pixmap(DBusMessageIter *iter) {
     dbus_int32_t height = g_tray_icon_height;
     if (!dbus_message_iter_append_basic(&entry, DBUS_TYPE_INT32, &width)) return 0;
     if (!dbus_message_iter_append_basic(&entry, DBUS_TYPE_INT32, &height)) return 0;
-    if (!dbus_message_iter_append_fixed_array(&entry, DBUS_TYPE_BYTE, &g_tray_icon_argb,
+    /* The pixels are the struct's "ay" member: a fixed array needs its own
+     * array container; libdbus aborts when it is appended to the struct. */
+    if (!dbus_message_iter_open_container(&entry, DBUS_TYPE_ARRAY, "y", &bytes)) return 0;
+    if (!dbus_message_iter_append_fixed_array(&bytes, DBUS_TYPE_BYTE, &g_tray_icon_argb,
                                               g_tray_icon_width * g_tray_icon_height * 4)) return 0;
+    if (!dbus_message_iter_close_container(&entry, &bytes)) return 0;
     if (!dbus_message_iter_close_container(&array, &entry)) return 0;
     if (!dbus_message_iter_close_container(iter, &array)) return 0;
     return 1;
 }
 
+/* StatusNotifierItem properties, as answered by Get and GetAll. */
+static const char *const g_sni_properties[] = {"Category", "Id", "Title", "Status", "IconName", "IconPixmap", "ItemIsMenu", "Menu"};
+
+static int append_variant_string(DBusMessageIter *iter, const char *value) {
+    DBusMessageIter variant;
+    if (!dbus_message_iter_open_container(iter, DBUS_TYPE_VARIANT, "s", &variant)) return 0;
+    if (!dbus_message_iter_append_basic(&variant, DBUS_TYPE_STRING, &value)) return 0;
+    return dbus_message_iter_close_container(iter, &variant);
+}
+
+/* Appends the variant value of `prop` to `iter`: 1 when appended, 0 when the
+ * property is unknown, -1 when the message could not be built. */
+static int append_sni_property(DBusMessageIter *iter, const char *prop) {
+    DBusMessageIter variant;
+    if (strcmp(prop, "Category") == 0) return append_variant_string(iter, "ApplicationStatus") ? 1 : -1;
+    if (strcmp(prop, "Id") == 0) return append_variant_string(iter, "ztray") ? 1 : -1;
+    if (strcmp(prop, "Title") == 0) return append_variant_string(iter, g_tray_tooltip ? g_tray_tooltip : "ztray") ? 1 : -1;
+    if (strcmp(prop, "Status") == 0) return append_variant_string(iter, g_tray_sni_active ? "Active" : "Passive") ? 1 : -1;
+    /* Hosts prefer a non-empty IconName over IconPixmap, so the fallback
+     * name applies only when there is no pixmap either. */
+    if (strcmp(prop, "IconName") == 0)
+        return append_variant_string(iter, g_tray_icon_name ? g_tray_icon_name : g_tray_icon_argb ? "" : "application-x-executable") ? 1 : -1;
+    if (strcmp(prop, "IconPixmap") == 0) {
+        if (!dbus_message_iter_open_container(iter, DBUS_TYPE_VARIANT, "a(iiay)", &variant)) return -1;
+        if (!append_tray_icon_pixmap(&variant)) return -1;
+        return dbus_message_iter_close_container(iter, &variant) ? 1 : -1;
+    }
+    if (strcmp(prop, "ItemIsMenu") == 0) {
+        dbus_bool_t value = FALSE;
+        if (!dbus_message_iter_open_container(iter, DBUS_TYPE_VARIANT, "b", &variant)) return -1;
+        if (!dbus_message_iter_append_basic(&variant, DBUS_TYPE_BOOLEAN, &value)) return -1;
+        return dbus_message_iter_close_container(iter, &variant) ? 1 : -1;
+    }
+    if (strcmp(prop, "Menu") == 0) {
+        const char *menu_obj_path = ZTRAY_TRAY_MENU_PATH;
+        if (!dbus_message_iter_open_container(iter, DBUS_TYPE_VARIANT, "o", &variant)) return -1;
+        if (!dbus_message_iter_append_basic(&variant, DBUS_TYPE_OBJECT_PATH, &menu_obj_path)) return -1;
+        return dbus_message_iter_close_container(iter, &variant) ? 1 : -1;
+    }
+    return 0;
+}
+
 static DBusHandlerResult reply_sni_property(DBusMessage *msg, const char *prop) {
     DBusMessage *reply = dbus_message_new_method_return(msg);
     if (!reply) return DBUS_HANDLER_RESULT_HANDLED;
-    DBusMessageIter iter, variant;
-
+    DBusMessageIter iter;
     dbus_message_iter_init_append(reply, &iter);
-
-    if (strcmp(prop, "Category") == 0) {
-        const char *v = "ApplicationStatus";
-        dbus_message_iter_open_container(&iter, DBUS_TYPE_VARIANT, "s", &variant);
-        dbus_message_iter_append_basic(&variant, DBUS_TYPE_STRING, &v);
-        dbus_message_iter_close_container(&iter, &variant);
-    } else if (strcmp(prop, "Id") == 0) {
-        const char *v = "ztray";
-        dbus_message_iter_open_container(&iter, DBUS_TYPE_VARIANT, "s", &variant);
-        dbus_message_iter_append_basic(&variant, DBUS_TYPE_STRING, &v);
-        dbus_message_iter_close_container(&iter, &variant);
-    } else if (strcmp(prop, "Title") == 0) {
-        const char *v = g_tray_tooltip ? g_tray_tooltip : "ztray";
-        dbus_message_iter_open_container(&iter, DBUS_TYPE_VARIANT, "s", &variant);
-        dbus_message_iter_append_basic(&variant, DBUS_TYPE_STRING, &v);
-        dbus_message_iter_close_container(&iter, &variant);
-    } else if (strcmp(prop, "Status") == 0) {
-        const char *v = g_tray_sni_active ? "Active" : "Passive";
-        dbus_message_iter_open_container(&iter, DBUS_TYPE_VARIANT, "s", &variant);
-        dbus_message_iter_append_basic(&variant, DBUS_TYPE_STRING, &v);
-        dbus_message_iter_close_container(&iter, &variant);
-    } else if (strcmp(prop, "IconName") == 0) {
-        const char *v = g_tray_icon_name ? g_tray_icon_name : "application-x-executable";
-        dbus_message_iter_open_container(&iter, DBUS_TYPE_VARIANT, "s", &variant);
-        dbus_message_iter_append_basic(&variant, DBUS_TYPE_STRING, &v);
-        dbus_message_iter_close_container(&iter, &variant);
-    } else if (strcmp(prop, "IconPixmap") == 0) {
-        dbus_message_iter_open_container(&iter, DBUS_TYPE_VARIANT, "a(iiay)", &variant);
-        if (!append_tray_icon_pixmap(&variant)) {
-            dbus_message_unref(reply);
-            return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
-        }
-        dbus_message_iter_close_container(&iter, &variant);
-    } else if (strcmp(prop, "Menu") == 0) {
-        const char *menu_obj_path = ZTRAY_TRAY_MENU_PATH;
-        dbus_message_iter_open_container(&iter, DBUS_TYPE_VARIANT, "o", &variant);
-        dbus_message_iter_append_basic(&variant, DBUS_TYPE_OBJECT_PATH, &menu_obj_path);
-        dbus_message_iter_close_container(&iter, &variant);
-    } else {
+    if (append_sni_property(&iter, prop) != 1) {
         dbus_message_unref(reply);
         return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
     }
-
     dbus_connection_send(g_conn, reply, NULL);
     dbus_message_unref(reply);
     return DBUS_HANDLER_RESULT_HANDLED;
+}
+
+/* Properties.GetAll: GNOME's AppIndicator extension reads the item only this
+ * way and unregisters items that do not answer it. */
+static DBusHandlerResult reply_sni_all_properties(DBusMessage *msg) {
+    DBusMessage *reply = dbus_message_new_method_return(msg);
+    if (!reply) return DBUS_HANDLER_RESULT_HANDLED;
+    DBusMessageIter iter, dict, entry;
+    dbus_message_iter_init_append(reply, &iter);
+    int ok = dbus_message_iter_open_container(&iter, DBUS_TYPE_ARRAY, "{sv}", &dict);
+    for (size_t i = 0; ok && i < sizeof g_sni_properties / sizeof g_sni_properties[0]; i++) {
+        const char *name = g_sni_properties[i];
+        ok = dbus_message_iter_open_container(&dict, DBUS_TYPE_DICT_ENTRY, NULL, &entry) &&
+             dbus_message_iter_append_basic(&entry, DBUS_TYPE_STRING, &name) &&
+             append_sni_property(&entry, name) == 1 &&
+             dbus_message_iter_close_container(&dict, &entry);
+    }
+    if (!ok || !dbus_message_iter_close_container(&iter, &dict)) {
+        dbus_message_unref(reply);
+        return DBUS_HANDLER_RESULT_NEED_MEMORY;
+    }
+    dbus_connection_send(g_conn, reply, NULL);
+    dbus_message_unref(reply);
+    return DBUS_HANDLER_RESULT_HANDLED;
+}
+
+/* Properties.GetAll on a dbusmenu object: its only property is Version. */
+static DBusHandlerResult reply_dbusmenu_all_properties(DBusMessage *msg) {
+    DBusMessage *reply = dbus_message_new_method_return(msg);
+    if (!reply) return DBUS_HANDLER_RESULT_HANDLED;
+    DBusMessageIter iter, dict, entry, variant;
+    const char *name = "Version";
+    dbus_uint32_t version = 4;
+    dbus_message_iter_init_append(reply, &iter);
+    int ok = dbus_message_iter_open_container(&iter, DBUS_TYPE_ARRAY, "{sv}", &dict) &&
+             dbus_message_iter_open_container(&dict, DBUS_TYPE_DICT_ENTRY, NULL, &entry) &&
+             dbus_message_iter_append_basic(&entry, DBUS_TYPE_STRING, &name) &&
+             dbus_message_iter_open_container(&entry, DBUS_TYPE_VARIANT, "u", &variant) &&
+             dbus_message_iter_append_basic(&variant, DBUS_TYPE_UINT32, &version) &&
+             dbus_message_iter_close_container(&entry, &variant) &&
+             dbus_message_iter_close_container(&dict, &entry) &&
+             dbus_message_iter_close_container(&iter, &dict);
+    if (!ok) {
+        dbus_message_unref(reply);
+        return DBUS_HANDLER_RESULT_NEED_MEMORY;
+    }
+    dbus_connection_send(g_conn, reply, NULL);
+    dbus_message_unref(reply);
+    return DBUS_HANDLER_RESULT_HANDLED;
+}
+
+static DBusHandlerResult reply_invalid_args(DBusMessage *msg);
+
+static DBusHandlerResult handle_properties_get_all(const char *path, DBusMessage *msg) {
+    if (!dbus_message_has_signature(msg, "s")) return reply_invalid_args(msg);
+    DBusMessageIter args;
+    if (!dbus_message_iter_init(msg, &args)) return reply_invalid_args(msg);
+    const char *iface = NULL;
+    dbus_message_iter_get_basic(&args, &iface);
+    if (strcmp(path, ZTRAY_SNI_PATH) == 0 && strcmp(iface, "org.kde.StatusNotifierItem") == 0)
+        return reply_sni_all_properties(msg);
+    if ((strcmp(path, ZTRAY_MENU_PATH) == 0 || strcmp(path, ZTRAY_TRAY_MENU_PATH) == 0) &&
+        strcmp(iface, "com.canonical.dbusmenu") == 0)
+        return reply_dbusmenu_all_properties(msg);
+    return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
 }
 
 static DBusHandlerResult reply_empty(DBusMessage *msg) {
@@ -392,6 +471,59 @@ static DBusHandlerResult handle_properties_get_v2(const char *path, DBusMessage 
     return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
 }
 
+static int append_root_properties(DBusMessageIter *dict) {
+    if (!append_dict_string(dict, "type", "standard")) return 0;
+    if (!append_dict_string(dict, "label", "")) return 0;
+    if (!append_dict_bool(dict, "enabled", TRUE)) return 0;
+    return append_dict_string(dict, "children-display", "submenu");
+}
+
+static int append_group_entry(DBusMessageIter *array, int32_t id, ZTrayItem *node) {
+    DBusMessageIter entry, dict;
+    if (!dbus_message_iter_open_container(array, DBUS_TYPE_STRUCT, NULL, &entry)) return 0;
+    if (!dbus_message_iter_append_basic(&entry, DBUS_TYPE_INT32, &id)) return 0;
+    if (!dbus_message_iter_open_container(&entry, DBUS_TYPE_ARRAY, "{sv}", &dict)) return 0;
+    if (!(node ? append_properties(&dict, node) : append_root_properties(&dict))) return 0;
+    if (!dbus_message_iter_close_container(&entry, &dict)) return 0;
+    return dbus_message_iter_close_container(array, &entry);
+}
+
+/* GetGroupProperties(ai ids, as names) -> a(ia{sv}): the properties of the
+ * requested items, or of every item when ids is empty. Unknown ids are left
+ * out; property names are not filtered. */
+static DBusHandlerResult handle_get_group_properties(const char *path, DBusMessage *msg) {
+    ZTrayItem *items = strcmp(path, ZTRAY_MENU_PATH) == 0 ? g_menubar_items : g_tray_items;
+    int n = strcmp(path, ZTRAY_MENU_PATH) == 0 ? g_n_menubar : g_n_tray;
+    if (!dbus_message_has_signature(msg, "aias")) return reply_invalid_args(msg);
+    DBusMessageIter args, ids;
+    if (!dbus_message_iter_init(msg, &args)) return reply_invalid_args(msg);
+    dbus_message_iter_recurse(&args, &ids);
+
+    DBusMessage *reply = dbus_message_new_method_return(msg);
+    if (!reply) return DBUS_HANDLER_RESULT_HANDLED;
+    DBusMessageIter iter, array;
+    dbus_message_iter_init_append(reply, &iter);
+    int ok = dbus_message_iter_open_container(&iter, DBUS_TYPE_ARRAY, "(ia{sv})", &array);
+    if (ok && dbus_message_iter_get_arg_type(&ids) == DBUS_TYPE_INVALID) {
+        ok = append_group_entry(&array, 0, NULL);
+        for (int i = 0; ok && i < n; i++) ok = append_group_entry(&array, items[i].id, &items[i]);
+    }
+    while (ok && dbus_message_iter_get_arg_type(&ids) == DBUS_TYPE_INT32) {
+        int32_t id = 0;
+        dbus_message_iter_get_basic(&ids, &id);
+        ZTrayItem *node = find_in(items, n, id);
+        if (node || id == 0) ok = append_group_entry(&array, id, node);
+        dbus_message_iter_next(&ids);
+    }
+    if (!ok || !dbus_message_iter_close_container(&iter, &array)) {
+        dbus_message_unref(reply);
+        return DBUS_HANDLER_RESULT_NEED_MEMORY;
+    }
+    dbus_connection_send(g_conn, reply, NULL);
+    dbus_message_unref(reply);
+    return DBUS_HANDLER_RESULT_HANDLED;
+}
+
 static DBusHandlerResult handle_get_layout(const char *path, DBusMessage *msg) {
     ZTrayItem *items;
     int n;
@@ -422,13 +554,15 @@ static DBusHandlerResult handle_get_layout(const char *path, DBusMessage *msg) {
     DBusMessage *reply = dbus_message_new_method_return(msg);
     if (!reply) return DBUS_HANDLER_RESULT_HANDLED;
 
-    DBusMessageIter iter, outer, layout_struct, dict, av;
+    /* The reply is two values, "u(ia{sv}av)": the revision and the layout.
+     * Wrapping them in one struct gives "(u(ia{sv}av))", which GDBus clients
+     * such as GNOME's AppIndicator extension reject. */
+    DBusMessageIter iter, layout_struct, dict, av;
     dbus_message_iter_init_append(reply, &iter);
-    if (!dbus_message_iter_open_container(&iter, DBUS_TYPE_STRUCT, NULL, &outer)) goto fail;
     dbus_uint32_t rev_copy = *revision;
-    if (!dbus_message_iter_append_basic(&outer, DBUS_TYPE_UINT32, &rev_copy)) goto fail;
+    if (!dbus_message_iter_append_basic(&iter, DBUS_TYPE_UINT32, &rev_copy)) goto fail;
 
-    if (!dbus_message_iter_open_container(&outer, DBUS_TYPE_STRUCT, NULL, &layout_struct)) goto fail;
+    if (!dbus_message_iter_open_container(&iter, DBUS_TYPE_STRUCT, NULL, &layout_struct)) goto fail;
     if (!dbus_message_iter_append_basic(&layout_struct, DBUS_TYPE_INT32, &nid)) goto fail;
 
     if (!dbus_message_iter_open_container(&layout_struct, DBUS_TYPE_ARRAY, "{sv}", &dict)) goto fail;
@@ -449,8 +583,7 @@ static DBusHandlerResult handle_get_layout(const char *path, DBusMessage *msg) {
         if (!append_layout_recursive(&av, items, n, parent_id, depth)) goto fail;
     }
     if (!dbus_message_iter_close_container(&layout_struct, &av)) goto fail;
-    if (!dbus_message_iter_close_container(&outer, &layout_struct)) goto fail;
-    if (!dbus_message_iter_close_container(&iter, &outer)) goto fail;
+    if (!dbus_message_iter_close_container(&iter, &layout_struct)) goto fail;
 
     dbus_connection_send(g_conn, reply, NULL);
     dbus_message_unref(reply);
@@ -559,8 +692,11 @@ static DBusHandlerResult filter_message(DBusConnection *connection, DBusMessage 
             return reply_introspect_menu(message);
         if (strcmp(iface, "org.freedesktop.DBus.Properties") == 0 && strcmp(member, "Get") == 0)
             return handle_properties_get_v2(path, message);
+        if (strcmp(iface, "org.freedesktop.DBus.Properties") == 0 && strcmp(member, "GetAll") == 0)
+            return handle_properties_get_all(path, message);
         if (strcmp(iface, "com.canonical.dbusmenu") == 0) {
             if (strcmp(member, "GetLayout") == 0) return handle_get_layout(path, message);
+            if (strcmp(member, "GetGroupProperties") == 0) return handle_get_group_properties(path, message);
             if (strcmp(member, "Event") == 0) return handle_event(path, message);
             if (strcmp(member, "AboutToShow") == 0) return handle_about_to_show(message);
             if (strcmp(member, "EventGroup") == 0) return handle_event_group(message);
@@ -573,6 +709,8 @@ static DBusHandlerResult filter_message(DBusConnection *connection, DBusMessage 
             return reply_introspect_sni(message);
         if (strcmp(iface, "org.freedesktop.DBus.Properties") == 0 && strcmp(member, "Get") == 0)
             return handle_properties_get_v2(path, message);
+        if (strcmp(iface, "org.freedesktop.DBus.Properties") == 0 && strcmp(member, "GetAll") == 0)
+            return handle_properties_get_all(path, message);
         return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
     }
 
@@ -632,6 +770,69 @@ static void query_appmenu_registrar_owner(void) {
 }
 
 /* 1 = com.canonical.AppMenu.Registrar has an owner, 0 = no owner, -1 = query pending or unavailable */
+static void tray_host_query_notify(DBusPendingCall *pending, void *user_data) {
+    (void)user_data;
+    DBusMessage *reply = dbus_pending_call_steal_reply(pending);
+    dbus_pending_call_unref(pending);
+    g_tray_host_query_in_flight = 0;
+    atomic_store(&g_tray_host_has_owner, -1);
+
+    if (!reply) return;
+    if (dbus_message_get_type(reply) == DBUS_MESSAGE_TYPE_METHOD_RETURN && dbus_message_has_signature(reply, "b")) {
+        DBusMessageIter args;
+        if (dbus_message_iter_init(reply, &args)) {
+            dbus_bool_t has_owner = FALSE;
+            dbus_message_iter_get_basic(&args, &has_owner);
+            atomic_store(&g_tray_host_has_owner, has_owner ? 1 : 0);
+        }
+    }
+    dbus_message_unref(reply);
+}
+
+/* Asks the bus whether org.kde.StatusNotifierWatcher is owned. Desktops that
+ * show StatusNotifierItems own it (KDE Plasma, Cinnamon, Budgie, waybar's tray,
+ * GNOME with the AppIndicator extension); stock GNOME does not. */
+static void query_tray_host_owner(void) {
+    if (g_tray_host_query_in_flight || atomic_load(&g_tray_host_has_owner) != -1) return;
+    if (!g_conn) return;
+
+    DBusMessage *msg = dbus_message_new_method_call(
+        "org.freedesktop.DBus",
+        "/org/freedesktop/DBus",
+        "org.freedesktop.DBus",
+        "NameHasOwner");
+    if (!msg) return;
+
+    const char *watcher = "org.kde.StatusNotifierWatcher";
+    if (!dbus_message_append_args(msg, DBUS_TYPE_STRING, &watcher, DBUS_TYPE_INVALID)) {
+        dbus_message_unref(msg);
+        return;
+    }
+
+    DBusPendingCall *pending = NULL;
+    if (!dbus_connection_send_with_reply(g_conn, msg, &pending, -1)) {
+        dbus_message_unref(msg);
+        return;
+    }
+    dbus_message_unref(msg);
+    if (!pending) return;
+    if (!dbus_pending_call_set_notify(pending, tray_host_query_notify, NULL, NULL)) {
+        dbus_pending_call_cancel(pending);
+        dbus_pending_call_unref(pending);
+        return;
+    }
+    g_tray_host_query_in_flight = 1;
+    dbus_connection_flush(g_conn);
+}
+
+/* 1 = a StatusNotifierWatcher shows the tray icon, 0 = none on this desktop,
+ * -1 = no tray installed yet or the answer is still pending */
+int ztray_linux_tray_host_state(void) {
+    if (!g_tray_sni_active) return -1;
+    query_tray_host_owner();
+    return atomic_load(&g_tray_host_has_owner);
+}
+
 int ztray_linux_appmenu_registrar_has_owner(void) {
     query_appmenu_registrar_owner();
     return atomic_load(&g_appmenu_registrar_has_owner);
@@ -639,6 +840,7 @@ int ztray_linux_appmenu_registrar_has_owner(void) {
 
 int ztray_linux_dbus_init(void) {
     if (g_conn) return 1;
+    if (!ztray_dbus_load()) return 0;
     DBusError err;
     dbus_error_init(&err);
     g_conn = dbus_bus_get(DBUS_BUS_SESSION, &err);
@@ -662,6 +864,8 @@ void ztray_linux_dbus_shutdown(void) {
     g_conn = NULL;
     g_appmenu_registrar_query_in_flight = 0;
     atomic_store(&g_appmenu_registrar_has_owner, -1);
+    g_tray_host_query_in_flight = 0;
+    atomic_store(&g_tray_host_has_owner, -1);
     free_menubar_items();
     g_menubar_revision = 0;
 }

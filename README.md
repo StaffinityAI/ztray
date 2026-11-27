@@ -96,7 +96,7 @@ On Linux, native menus require a session D-Bus and an AppMenu registrar. The com
 
 ## Supported targets
 
-The native menu/tray compile CI matrix covers Linux x86_64 and aarch64, plus Windows x86_64 and ARM64. Example CI builds on current macOS, Windows, and Linux runners. Linux builds for the default native target require `libdbus-1-dev` and window chrome requires `libx11-dev`. Explicit Linux targets such as `-Dtarget=x86_64-linux-gnu` link a D-Bus stub whose menu and tray installation returns `error.DBusUnavailable` or `error.TrayInstallFailed`; desktop-visible menu, tray, and compositor behavior still requires smoke testing on the target environment.
+The native menu/tray compile CI matrix covers Linux x86_64 and aarch64, plus Windows x86_64 and ARM64. Example CI builds on current macOS, Windows, and Linux runners. On glibc Linux targets, native and explicit (`-Dtarget=x86_64-linux-gnu.2.35`) alike, the D-Bus backend loads `libdbus-1.so.3` at runtime, so building needs no D-Bus development files and a cross-compiled application gets a working tray; without the library, menu and tray installation return `error.DBusUnavailable` or `error.TrayInstallFailed`. Other Linux ABIs link a stub with the same failures. Window chrome requires `libx11-dev`. `trayHostAvailable()` reports `false` when no `org.kde.StatusNotifierWatcher` displays the icon, as on stock GNOME without the AppIndicator extension. Desktop-visible menu, tray, and compositor behavior still requires smoke testing on the target environment.
 
 ```sh
 zig build        # compile/link the native tray without launching
